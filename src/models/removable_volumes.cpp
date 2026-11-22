@@ -82,6 +82,23 @@ bool removableDisk(const fs::path& path)
     return flag == '1';
 }
 
+CommandResult runUdisks(const char* action, const fs::path& device)
+{
+    std::vector<std::string> arguments{"/usr/bin/udisksctl", action, "--no-user-interaction", "-b", device.string()};
+    auto result = runCommand(arguments);
+    if (result || (result.output.find("NotAuthorized") == std::string::npos &&
+                   result.output.find("MountedByOtherUser") == std::string::npos)) {
+        return result;
+    }
+    // APPLaunch may run outside an active polkit session. Respect an existing sudo policy.
+    arguments.insert(arguments.begin(), {"/usr/bin/sudo", "-n", "--"});
+    auto elevated = runCommand(arguments);
+    if (!elevated) {
+        elevated.output = result.output + elevated.output;
+    }
+    return elevated;
+}
+
 FileOperationResult ejectError(std::string message, const CommandResult& result)
 {
     if (!result.output.empty()) {
@@ -218,8 +235,7 @@ FileOperationResult ejectVolume(const RemovableVolume& volume)
         }) != 1) {
         return {FileOperationStatus::Failed, "Drive has multiple mount points"};
     }
-    const auto unmount = runCommand({"/usr/bin/udisksctl", "unmount", "--no-user-interaction",
-                                      "-b", volume.mount.source.string()});
+    const auto unmount = runUdisks("unmount", volume.mount.source);
     if (!unmount || volumePresent(volume.mount.id)) {
         return ejectError("Could not unmount " + volume.name, unmount);
     }
@@ -233,8 +249,7 @@ FileOperationResult ejectVolume(const RemovableVolume& volume)
             return {FileOperationStatus::Ok, "Unmounted. Other volumes are still mounted."};
         }
     }
-    const auto power = runCommand({"/usr/bin/udisksctl", "power-off", "--no-user-interaction",
-                                    "-b", volume.disk.string()});
+    const auto power = runUdisks("power-off", volume.disk);
     if (!power) {
         return ejectError("Unmounted. Could not power off " + volume.name, power);
     }
