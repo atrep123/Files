@@ -345,7 +345,10 @@ if(BUILD_TESTING)
     add_executable(font_coverage_tests
         tests/font_coverage_test.cpp
         src/views/browser_text.cpp
+        src/core/files_language.cpp
         src/assets/font_assets.cpp
+        src/assets/res_c/font_noto_sans_semibold_12.c
+        src/assets/res_c/font_noto_sans_semibold_14.c
         src/assets/res_c/font_noto_sans_jp_semibold_10.c
         src/assets/res_c/font_noto_sans_jp_semibold_12.c
         src/assets/res_c/font_noto_sans_jp_semibold_14.c

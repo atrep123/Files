@@ -1,3 +1,4 @@
+#include "assets/font_assets.hpp"
 #include "layout_audit.hpp"
 
 #include <algorithm>
@@ -21,6 +22,8 @@
 #include "src/misc/lv_text_private.h"
 #include "src/widgets/label/lv_label_private.h"
 
+LV_FONT_DECLARE(font_noto_sans_semibold_12);
+LV_FONT_DECLARE(font_noto_sans_semibold_14);
 LV_FONT_DECLARE(font_noto_sans_sc_semibold_10);
 LV_FONT_DECLARE(font_noto_sans_sc_semibold_12);
 LV_FONT_DECLARE(font_noto_sans_sc_semibold_14);
@@ -97,6 +100,9 @@ json font_data(const lv_font_t* font)
 {
     struct Face { const lv_font_t* font; const char* name; int size; };
     const Face faces[] = {
+        {files::uiKeyBitmapFont(), "Files key bitmap", 12},
+        {&font_noto_sans_semibold_12, "Noto Sans SemiBold", 12},
+        {&font_noto_sans_semibold_14, "Noto Sans SemiBold", 14},
         {&font_noto_sans_sc_semibold_10, "Noto Sans SC SemiBold", 10},
         {&font_noto_sans_sc_semibold_12, "Noto Sans SC SemiBold", 12},
         {&font_noto_sans_sc_semibold_14, "Noto Sans SC SemiBold", 14},

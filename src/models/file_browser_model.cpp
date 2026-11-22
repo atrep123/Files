@@ -71,23 +71,14 @@ FileOperationResult disconnected()
     return errorResult(FileOperationStatus::NotFound, "Drive disconnected");
 }
 
-std::string freeSpace(const fs::path& path)
+std::optional<uint64_t> freeSpace(const fs::path& path)
 {
     std::error_code error;
     const auto space = fs::space(path, error);
     if (error) {
-        return "Free space unavailable";
+        return std::nullopt;
     }
-    double available = static_cast<double>(space.available);
-    const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
-    size_t unit = 0;
-    while (available >= 1024 && unit < 4) {
-        available /= 1024;
-        ++unit;
-    }
-    std::ostringstream label;
-    label << std::fixed << std::setprecision(unit == 0 ? 0 : 1) << available << ' ' << units[unit] << " free";
-    return label.str();
+    return space.available;
 }
 
 bool isPermissionError(const std::error_code& error)
@@ -118,6 +109,8 @@ FileOperationResult filesystemError(const char* operation, const std::error_code
     if (isPermissionError(error)) {
         return errorResult(FileOperationStatus::PermissionDenied, "Permission denied");
     }
+    if (error == std::errc::no_space_on_device) return errorResult(FileOperationStatus::Failed, "Disk is full");
+    if (error == std::errc::read_only_file_system) return errorResult(FileOperationStatus::Failed, "Disk is read-only");
     return errorResult(FileOperationStatus::Failed, std::string(operation) + " failed: " + error.message());
 }
 
@@ -128,6 +121,9 @@ FileOperationResult transferError(const char* operation, const internal::Filesys
     }
     if (isPermissionError(transfer.error)) {
         return errorResult(FileOperationStatus::PermissionDenied, "Permission denied");
+    }
+    if (transfer.error == std::errc::no_space_on_device || transfer.error == std::errc::read_only_file_system) {
+        return filesystemError(operation, transfer.error);
     }
     if (transfer.failure == internal::FilesystemTransferFailure::Cancelled ||
         transfer.failure == internal::FilesystemTransferFailure::MountedSource) {
@@ -222,12 +218,27 @@ VolumeChanges FileBrowserModel::updateVolumes(std::vector<internal::RemovableVol
     }
     _volumes = std::move(volumes);
 
+    // Keep the closest remaining drive selected if a selected volume disappears.
+    std::string neighbor;
+    const auto* selection = selectedEntry();
+    const auto oldId = _current_mount_id ? _current_mount_id : (selection && selection->mountRoot ? selection->mountId : 0);
+    if (oldId && !volume(oldId)) {
+        const auto old = std::find_if(changes.removed.begin(), changes.removed.end(), [oldId](const auto& item) {
+            return item.mount.id == oldId;
+        });
+        const auto next = old == changes.removed.end() ? _volumes.begin() :
+            std::lower_bound(_volumes.begin(), _volumes.end(), *old, [](const auto& a, const auto& b) {
+                return a.name == b.name ? a.mount.target < b.mount.target : a.name < b.name;
+            });
+        if (!_volumes.empty()) neighbor = (next == _volumes.end() ? _volumes.back() : *next).mount.target.string();
+    }
     // Navigation can reach a recently mounted drive before the next poll.
     if (changes.leftVolume || (_current_mount_id && !volume(_current_mount_id))) {
         changes.leftVolume = true;
-        showPlaces();
+        showPlaces(neighbor);
     } else if (inPlaces()) {
-        refresh();
+        if (neighbor.empty()) refresh();
+        else refreshPlaces(neighbor);
     }
     return changes;
 }
@@ -277,7 +288,7 @@ void FileBrowserModel::refreshPlaces(const std::string& preferredPath)
         auto& entry = addLocation(volume.mount.target, volume.name);
         entry.mountId = volume.mount.id;
         entry.mountRoot = true;
-        entry.freeSpace = freeSpace(volume.mount.target);
+        entry.freeBytes = freeSpace(volume.mount.target);
     }
     if (const auto* user = getpwuid(getuid()); user && user->pw_dir) {
         addLocation(user->pw_dir, "Home");
@@ -286,7 +297,7 @@ void FileBrowserModel::refreshPlaces(const std::string& preferredPath)
     const auto& previous = _entries.get();
     if (previous.size() != list.size() ||
         !std::equal(list.begin(), list.end(), previous.begin(), [](const auto& a, const auto& b) {
-            return a.path == b.path && a.name == b.name && a.mountId == b.mountId && a.freeSpace == b.freeSpace;
+            return a.path == b.path && a.name == b.name && a.mountId == b.mountId && a.freeBytes == b.freeBytes;
         })) {
         setEntries(std::move(list), preferredPath);
     } else if (!preferredPath.empty()) {
@@ -632,6 +643,27 @@ FileTransferResult FileBrowserModel::performTransfer(const FileEntry& entry, con
     return result;
 }
 
+FileOperationResult FileBrowserModel::createDirectory(const std::string& name)
+{
+    if (inPlaces()) return errorResult(FileOperationStatus::InvalidSelection, "Open a folder first");
+    if (name.empty() || name == "." || name == ".." || name.find('/') != std::string::npos ||
+        name.find('\0') != std::string::npos) {
+        return errorResult(FileOperationStatus::InvalidSelection, "Invalid name");
+    }
+    const internal::TransferDirectory directory(_current_directory.get(), _current_mount_id);
+    if (!directory.connected()) return disconnected();
+    std::error_code error;
+    if (!fs::create_directory(directory.path() / name, error)) {
+        if (!error || error == std::errc::file_exists) {
+            return errorResult(FileOperationStatus::Failed, "Name already exists");
+        }
+        return filesystemError("Create folder", error);
+    }
+    refreshSelecting(pathString(fs::path(_current_directory.get()) / name));
+    _status.set("Created " + name);
+    return {};
+}
+
 FileOperationResult FileBrowserModel::renameSelectedTo(const std::string& name)
 {
     const FileEntry* selected = selectedEntry();
@@ -721,7 +753,7 @@ FileEntry FileBrowserModel::makeEntry(const fs::directory_entry& item, bool incl
     const std::string extension = directory ? "" : normalizedExtension(fsPath.extension().string());
 
     uint64_t size = 0;
-    if (includeMetadata && !directory) {
+    if (!directory && item.is_regular_file(ec)) {
         ec.clear();
         size = static_cast<uint64_t>(item.file_size(ec));
         if (ec) {

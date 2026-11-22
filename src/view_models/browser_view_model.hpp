@@ -20,20 +20,35 @@ enum class BrowserAction {
     Delete,
     Places,
     Eject,
+    NewFolder,
+    Language,
+    Exit,
+    SystemLanguage,
+    English,
+    Czech,
 };
 
-enum class PackageDialogMode { Closed, Reading, Review, Password, Installing, Transferring, ConfirmEject, Ejecting, Result };
+enum class PackageDialogMode { Closed, Reading, Review, Password, Installing, ConfirmTransfer, Transferring, ConfirmEject, Ejecting, Result };
+
+enum class DialogTone { Normal, Warning, Error, Success };
 
 struct PackageDialog {
     PackageDialogMode mode = PackageDialogMode::Closed;
     std::string title;
     std::string text;
     bool allowInstall = false;
+    DialogTone tone = DialogTone::Normal;
+    std::string identity;
+    std::string metadata;
+    bool rootScripts = false;
+    bool move = false;
 };
 
 struct VolumeNotice {
     std::string text;
     uint64_t connectedMountId = 0;
+    DialogTone tone = DialogTone::Normal;
+    unsigned duration() const { return text.find('\n') == std::string::npos ? 3000 : 5000; }
 };
 
 class BrowserViewModel : public ViewModel {
@@ -62,6 +77,10 @@ public:
                _pending_rename.get().active || packageDialogOpen();
     }
     bool canEject() const;
+    bool languageMenu() const { return _language_menu; }
+    std::string directoryTitle();
+    std::string directoryCaption();
+    std::vector<BrowserAction> availableActions() const;
     bool inPlaces() const { return _model.browser().inPlaces(); }
 
     smooth_ui_toolkit::SingleObservable<std::string>& currentDirectory()
@@ -144,6 +163,7 @@ public:
     void cancelDelete();
     void confirmDelete();
     void requestRenameSelected();
+    void requestNewFolder();
     void setPendingRenameName(std::string name);
     void cancelRename();
     void confirmRename();
@@ -188,7 +208,8 @@ private:
     uint32_t _next_selection_at_ms = 0;
     uint32_t _magic_count          = 0;
 
-    std::vector<BrowserAction> availableActions() const;
+    bool _language_menu = false;
+    void startTransfer();
     void handlePackageKey(uint32_t key);
     void startPackageRead(const FileEntry& entry);
     void startPackageInstall();

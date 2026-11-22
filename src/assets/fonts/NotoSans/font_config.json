@@ -1,6 +1,52 @@
 {
     "targets": [
         {
+            "name": "font_noto_sans_semibold_12",
+            "source": "NotoSans-SemiBold.ttf",
+            "args": [
+                "--no-compress",
+                "--no-prefilter",
+                "--force-fast-kern-format"
+            ],
+            "size": 12,
+            "bpp": 4,
+            "ranges": [
+                "0x20-0x024F",
+                "0x0370-0x052F",
+                "0x2000-0x2029",
+                "0x202F-0x205E",
+                "0x20A0-0x20CF",
+                "0x2100-0x214F"
+            ],
+            "symbols": [
+                "–—‘’“”…•·×"
+            ],
+            "additional_fonts": []
+        },
+        {
+            "name": "font_noto_sans_semibold_14",
+            "source": "NotoSans-SemiBold.ttf",
+            "args": [
+                "--no-compress",
+                "--no-prefilter",
+                "--force-fast-kern-format"
+            ],
+            "size": 14,
+            "bpp": 4,
+            "ranges": [
+                "0x20-0x024F",
+                "0x0370-0x052F",
+                "0x2000-0x2029",
+                "0x202F-0x205E",
+                "0x20A0-0x20CF",
+                "0x2100-0x214F"
+            ],
+            "symbols": [
+                "–—‘’“”…•·×"
+            ],
+            "additional_fonts": []
+        },
+        {
             "name": "font_noto_sans_mono_semibold_12",
             "source": "NotoSansMono-SemiBold.ttf",
             "args": [

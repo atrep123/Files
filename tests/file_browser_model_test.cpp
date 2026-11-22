@@ -83,7 +83,7 @@ void testPlacesAndVolumeChanges()
     require(startedWithDisk.inPlaces() && !startedWithDisk.canGoBack(), "start on Places when a disk is mounted");
     const auto& places = startedWithDisk.entries().get();
     require(places.size() == 3 && places[0].mountRoot && places[0].name == disk.name &&
-                !places[0].freeSpace.empty() && places[1].name == "Home" && places[2].name == "File system" &&
+                places[0].freeBytes.has_value() && places[1].name == "Home" && places[2].name == "File system" &&
                 startedWithDisk.selectedIndex().get() == 0,
             "Places must select the drive before Home and File system");
     require(startedWithDisk.hasRemovableVolumes(), "a mounted drive must enable the USB shortcut");

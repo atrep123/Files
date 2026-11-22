@@ -77,13 +77,15 @@ void requireBrowserText()
         const auto hint = files::browserKeyHint(state & 1, state & 2, usb, state & 8, state & 16, state & 32);
         lv_point_t size{};
         lv_text_get_size(&size, hint.c_str(), files::uiFont12(), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        check(size.x <= 300, hint.c_str());
+        check(size.x <= 304 && files::textLength(hint) <= 44, hint.c_str());
         check((hint.find("U USB") != std::string::npos) == usb, "U USB must reflect connected drives");
     }
-    check(files::browserKeyHint(true, true, true, true, true, false) == "Enter Open · E Eject · Tab Menu · U USB",
-          "selected drive should have the compact Places footer");
+    const auto drive = files::browserKeyHint(true, true, true, true, true, false);
+    check(drive.find("E Eject") != std::string::npos && drive.find("U USB") != std::string::npos,
+          "selected drive should offer eject and USB shortcuts");
     requireGlyph({files::uiFont12(), "footer arrows"}, 0x2191);
     requireGlyph({files::uiFont12(), "footer arrows"}, 0x2193);
+    requireGlyph({files::uiFont12(), "footer return"}, 0x21B5);
 }
 
 void requireCzechFilename(Font face)
@@ -100,8 +102,8 @@ int main()
 {
     const std::array<Font, 9> faces{{
         {files::uiFont10(), "Noto Sans SC 10px"},
-        {files::uiFont12(), "Noto Sans SC 12px"},
-        {files::uiFont14(), "Noto Sans SC 14px"},
+        {files::uiFont12(), "Noto Sans 12px"},
+        {files::uiFont14(), "Noto Sans 14px"},
         {&font_noto_sans_jp_semibold_10, "Noto Sans JP 10px"},
         {&font_noto_sans_jp_semibold_12, "Noto Sans JP 12px"},
         {&font_noto_sans_jp_semibold_14, "Noto Sans JP 14px"},

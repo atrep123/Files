@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <optional>
 #include <vector>
 
 namespace files {
@@ -58,7 +59,7 @@ struct FileEntry {
     bool writable           = true;
     uint64_t mountId        = 0;
     bool mountRoot          = false;
-    std::string freeSpace;
+    std::optional<uint64_t> freeBytes;
 };
 
 struct FileOperationResult {
@@ -86,6 +87,7 @@ struct PendingRenameFile {
     bool active = false;
     FileEntry file;
     std::string name;
+    bool creating = false;
 };
 
 const char* pageIdName(PageId page);

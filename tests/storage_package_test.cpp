@@ -258,7 +258,7 @@ void testLoop(const fs::path& mount, const fs::path& temp)
     browser.showPlaces();
     selectByName(browser, mount.filename().string());
     const FileEntry root = *browser.selectedEntry();
-    check(root.mountRoot && root.mountId && !root.freeSpace.empty(), "drive should show a name and free space");
+    check(root.mountRoot && root.mountId && root.freeBytes.has_value(), "drive should show a name and free space");
     check(!browser.deleteSelected() && !browser.renameSelectedTo("renamed"), "mounted root can be modified");
     check(static_cast<bool>(browser.openSelected()), "could not open mounted volume");
     auto copied = browser.copyEntryTo(local, mount.string());

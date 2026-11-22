@@ -1,6 +1,9 @@
 #include "view_models/browser_view_model.hpp"
 
+#include "core/files_language.hpp"
 #include <spdlog/spdlog.h>
+#include <cstdlib>
+#include <filesystem>
 #include <algorithm>
 #include <chrono>
 
@@ -10,7 +13,6 @@ namespace {
 constexpr uint32_t kHoldRepeatDelayMs = 320;
 constexpr uint32_t kHoldRepeatMs      = 90;
 constexpr uint32_t kVolumePollMs      = 750;
-constexpr uint32_t kVolumeNoticeMs    = 5000;
 // Leave one row of context when paging through the five-row browser window.
 constexpr int kBrowserPageStep = 4;
 
@@ -288,7 +290,8 @@ void BrowserViewModel::pollVolumes(uint32_t nowMs)
             if (editing) {
                 cancelDelete();
                 cancelRename();
-                _package_dialog.set({PackageDialogMode::Result, "File operation cancelled", "Drive disconnected"});
+                _package_dialog.set({PackageDialogMode::Result, local("File operation cancelled", "Operace zrušena"),
+                                     local("Drive disconnected", "Disk odpojen"), false, DialogTone::Error});
             }
             if (_router.page() == PageId::Preview) {
                 _router.back();
@@ -307,7 +310,8 @@ void BrowserViewModel::pollVolumes(uint32_t nowMs)
                 (mode == PackageDialogMode::Review || mode == PackageDialogMode::Password)) {
                 _prepared_deb.reset();
                 internal::clearSecret(_package_password);
-                _package_dialog.set({PackageDialogMode::Result, "Debian package", "Drive disconnected"});
+                _package_dialog.set({PackageDialogMode::Result, local("Debian package", "Balíček Debian"),
+                                     local("Drive disconnected", "Disk odpojen"), false, DialogTone::Error});
             }
             if (_volume_notice.get().connectedMountId == id) {
                 advanceVolumeNotice();
@@ -315,20 +319,46 @@ void BrowserViewModel::pollVolumes(uint32_t nowMs)
             const bool transferDrive = mode == PackageDialogMode::Transferring &&
                 (id == _pending_copy.file.mountId || id == _transfer_destination_mount_id);
             if (!transferDrive && (id != _eject_mount_id || mode != PackageDialogMode::Ejecting)) {
-                showVolumeNotice({drive.name + " removed"});
+                showVolumeNotice({inCzech() ? "Disk " + drive.name + " odpojen" : "Drive " + drive.name + " disconnected",
+                                  0, DialogTone::Warning});
             }
         }
         for (const auto& drive : changes.arrived) {
-            showVolumeNotice({"USB disk " + drive.name + " connected — Press U to open", drive.mount.id});
+            showVolumeNotice({(inCzech() ? "Disk " + drive.name + " připojen" : "Drive " + drive.name + " connected") +
+                              local("\nU Open", "\nU Otevřít"), drive.mount.id, DialogTone::Success});
         }
         if (_package_dialog.get().mode == PackageDialogMode::ConfirmEject && !_model.browser().volume(_eject_mount_id)) {
             _eject_mount_id = 0;
-            _package_dialog.set({PackageDialogMode::Result, "Eject drive", "Drive disconnected"});
+            _package_dialog.set({PackageDialogMode::Result, local("Eject failed", "Vysunutí selhalo"),
+                                 local("Drive disconnected", "Disk odpojen"), false, DialogTone::Error});
         }
     }
-    if (!_volume_notice.get().text.empty() && nowMs - _notice_started_at >= kVolumeNoticeMs) {
+    if (!_volume_notice.get().text.empty() && nowMs - _notice_started_at >= _volume_notice.get().duration()) {
         advanceVolumeNotice();
     }
+}
+
+std::string BrowserViewModel::directoryTitle()
+{
+    if (const auto* drive = _model.browser().volume(_model.browser().currentMountId())) return drive->name;
+    const auto& path = currentDirectory().get();
+    const auto* home = std::getenv("HOME");
+    if (home && path == home) return local("Home", "Domů");
+    return path == "/" ? local("File system", "Souborový systém") : local("Files", "Soubory");
+}
+
+std::string BrowserViewModel::directoryCaption()
+{
+    const auto& path = currentDirectory().get();
+    if (const auto* drive = _model.browser().volume(_model.browser().currentMountId())) {
+        const auto relative = std::filesystem::path(path).lexically_relative(drive->mount.target);
+        return relative.empty() || relative == "." ? "" : "/ " + relative.string();
+    }
+    const auto* home = std::getenv("HOME");
+    if (home && (path == home || path.rfind(std::string(home) + "/", 0) == 0)) {
+        return path == home ? "" : "~" + path.substr(std::string(home).size());
+    }
+    return path == "/" ? "" : path;
 }
 
 bool BrowserViewModel::canEject() const
@@ -344,16 +374,16 @@ const FileEntry* BrowserViewModel::selectedEntry() const
 
 std::vector<BrowserAction> BrowserViewModel::availableActions() const
 {
+    if (_language_menu) return {BrowserAction::SystemLanguage, BrowserAction::English, BrowserAction::Czech};
     const auto* entry = selectedEntry();
     if (_model.browser().inPlaces()) {
-        if (!entry) {
-            return {};
+        if (entry && entry->mountRoot) {
+            return {BrowserAction::Eject, BrowserAction::Open, BrowserAction::Language, BrowserAction::Exit};
         }
-        return entry->mountRoot ? std::vector<BrowserAction>{BrowserAction::Eject, BrowserAction::Open}
-                                : std::vector<BrowserAction>{BrowserAction::Open};
+        return {BrowserAction::Open, BrowserAction::Language, BrowserAction::Exit};
     }
     if (entry && entry->mountRoot) {
-        return {BrowserAction::Eject, BrowserAction::Open, BrowserAction::Places};
+        return {BrowserAction::Eject, BrowserAction::Open, BrowserAction::Places, BrowserAction::Language, BrowserAction::Exit};
     }
 
     std::vector<BrowserAction> actions;
@@ -369,7 +399,7 @@ std::vector<BrowserAction> BrowserViewModel::availableActions() const
     if (entry) {
         actions.insert(actions.end(), {BrowserAction::Rename, BrowserAction::Delete});
     }
-    actions.push_back(BrowserAction::Places);
+    actions.insert(actions.end(), {BrowserAction::Places, BrowserAction::NewFolder, BrowserAction::Language, BrowserAction::Exit});
     return actions;
 }
 
@@ -444,14 +474,21 @@ void BrowserViewModel::pasteCopiedToCurrentDirectory()
     }
 
     clearHeldSelection();
+    _package_dialog.set({PackageDialogMode::ConfirmTransfer,
+                         _pending_copy.cut ? local("Move here?", "Přesunout sem?") : local("Copy here?", "Zkopírovat sem?"),
+                         _pending_copy.file.name, false, DialogTone::Normal, {}, {}, false, _pending_copy.cut});
+}
+
+void BrowserViewModel::startTransfer()
+{
     _transfer_control = std::make_shared<internal::TransferControl>();
     _transfer_destination_mount_id = _model.browser().currentMountId();
     const auto* source = _model.browser().volume(_pending_copy.file.mountId);
     const auto* destination = _model.browser().volume(_transfer_destination_mount_id);
     _transfer_source_name = source ? source->name : std::string{};
     _transfer_destination_name = destination ? destination->name : std::string{};
-    _package_dialog.set({PackageDialogMode::Transferring, _pending_copy.cut ? "Move" : "Copy",
-                         _pending_copy.file.name + "\n0 bytes copied"});
+    _package_dialog.set({PackageDialogMode::Transferring, _pending_copy.cut ? local("Moving", "Přesouvám") : local("Copying", "Kopíruji"),
+                         sizeInUnits(0), false, DialogTone::Normal, _pending_copy.file.name});
     _storage_operation = std::async(std::launch::async,
         [entry = _pending_copy.file, cut = _pending_copy.cut, directory = currentDirectory().get(),
          mountId = _model.browser().currentMountId(), control = _transfer_control] {
@@ -491,6 +528,7 @@ void BrowserViewModel::openActionMenu()
 
 void BrowserViewModel::closeActionMenu()
 {
+    _language_menu = false;
     _action_menu_open.set(false);
 }
 
@@ -532,6 +570,13 @@ void BrowserViewModel::requestRenameSelected()
     closeActionMenu();
 }
 
+void BrowserViewModel::requestNewFolder()
+{
+    closeActionMenu();
+    _pending_rename.set(PendingRenameFile{true, {}, {}, true});
+    _pending_rename_name.set("");
+}
+
 void BrowserViewModel::setPendingRenameName(std::string name)
 {
     if (!_pending_rename.get().active || _pending_rename_name.get() == name) {
@@ -553,13 +598,16 @@ void BrowserViewModel::confirmRename()
         return;
     }
 
-    const auto result = _model.browser().renameSelectedTo(_pending_rename_name.get());
+    status().set("");
+    const auto result = pending.creating ? _model.browser().createDirectory(_pending_rename_name.get()) :
+                                          _model.browser().renameSelectedTo(_pending_rename_name.get());
     if (!result) {
         _model.browser().status().set(result.message);
         return;
     }
     _pending_rename.set(PendingRenameFile{});
     _pending_rename_name.set("");
+    status().set(std::string(status().get()));
 }
 
 void BrowserViewModel::selectPreviousAction()
@@ -617,6 +665,30 @@ void BrowserViewModel::activateSelectedAction()
             closeActionMenu();
             requestEject();
             break;
+        case BrowserAction::NewFolder:
+            requestNewFolder();
+            break;
+        case BrowserAction::Language:
+            _language_menu = true;
+            _action_menu_selected_index.set(static_cast<int>(languagePreference()));
+            _action_menu_open.set(true);
+            break;
+        case BrowserAction::SystemLanguage:
+        case BrowserAction::English:
+        case BrowserAction::Czech: {
+            const auto language = actionAt(_action_menu_selected_index.get()) == BrowserAction::English ? Language::English :
+                                  actionAt(_action_menu_selected_index.get()) == BrowserAction::Czech ? Language::Czech :
+                                                                                                    Language::System;
+            const bool saved = setLanguagePreference(language);
+            closeActionMenu();
+            entries().set(std::vector<FileEntry>(entries().get()));
+            if (!saved) status().set("Could not save language");
+            break;
+        }
+        case BrowserAction::Exit:
+            closeActionMenu();
+            status().set("Hold Esc to exit");
+            break;
     }
 }
 
@@ -635,13 +707,14 @@ void BrowserViewModel::requestEject()
     clearHeldSelection();
     _eject_mount_id = mountId;
     _eject_name = drive->name;
-    _package_dialog.set({PackageDialogMode::ConfirmEject, "Eject drive", "Eject " + _eject_name + "?"});
+    _package_dialog.set({PackageDialogMode::ConfirmEject, local("Eject drive?", "Vysunout disk?"), _eject_name});
 }
 
 void BrowserViewModel::startEject()
 {
-    _eject_progress = "Checking " + _eject_name + "...";
-    _package_dialog.set({PackageDialogMode::Ejecting, "Eject drive", _eject_progress});
+    _eject_progress = local("Checking drive…", "Ověřuji disk…");
+    _package_dialog.set({PackageDialogMode::Ejecting, local("Ejecting drive", "Vysouvám disk"), _eject_progress,
+                         false, DialogTone::Normal, _eject_name});
     _storage_operation = std::async(std::launch::async, [this, mountId = _eject_mount_id] {
         return FileTransferResult{FileBrowserModel::ejectDrive(mountId, [this](const std::string& message) {
             std::lock_guard<std::mutex> lock(_eject_mutex);
@@ -668,13 +741,13 @@ void BrowserViewModel::tickStorage(uint32_t nowMs)
             // Reconcile while the transfer still owns the removal message.
             _last_volume_check = nowMs - kVolumePollMs;
             pollVolumes(nowMs);
-            _model.browser().refresh(false);
+            _model.browser().refresh(true);
 
             std::string name = outcome.disconnectedSource ? _transfer_source_name : _transfer_destination_name;
             if (outcome.disconnectedSource && outcome.disconnectedDestination &&
                 outcome.disconnectedDestination != outcome.disconnectedSource) {
                 if (!name.empty() && !_transfer_destination_name.empty()) {
-                    name += " and " + _transfer_destination_name;
+                    name += local(" and ", " a ") + _transfer_destination_name;
                 } else if (name.empty()) {
                     name = _transfer_destination_name;
                 }
@@ -682,27 +755,31 @@ void BrowserViewModel::tickStorage(uint32_t nowMs)
             using Destination = internal::TransferDestination;
             std::string text;
             switch (outcome.destinationState) {
-                case Destination::NotPublished: text = "No new destination file."; break;
-                case Destination::PartialRemoved: text = "Partial file removed."; break;
-                case Destination::CleanupFailed: text = "Could not remove the partial file."; break;
-                case Destination::Published: text = "Destination file was written."; break;
+                case Destination::NotPublished: text = local("No new destination file.", "Cílový soubor nevznikl."); break;
+                case Destination::PartialRemoved: text = local("Partial file removed.", "Neúplný soubor smazán."); break;
+                case Destination::CleanupFailed: text = local("Could not remove the partial file.", "Neúplný soubor se nepodařilo smazat."); break;
+                case Destination::Published: text = local("Destination file was written.", "Cílový soubor byl zapsán."); break;
             }
             const bool move = _pending_copy.cut;
-            const char* operation = move ? "Move" : "Copy";
             if (outcome.destinationState == Destination::Published || outcome.destinationState == Destination::CleanupFailed) {
-                text += "\n\nReconnect the drive and check the destination.";
+                text += local("\nReconnect the drive and check the destination.", "\nPřipojte disk a zkontrolujte cíl.");
             } else {
-                text += move ? "\n\nReconnect the drive and move again." : "\n\nReconnect the drive and copy again.";
+                text += move ? local("\nReconnect the drive and move again.", "\nPřipojte disk a zopakujte přesun.") :
+                               local("\nReconnect the drive and copy again.", "\nPřipojte disk a zopakujte kopírování.");
             }
+            const auto disconnect = name.empty() ? local("Drive disconnected.", "Disk byl odpojen.") :
+                std::string(local("Drive ", "Disk ")) + name + local(" was disconnected.", " byl odpojen.");
             _package_dialog.set({PackageDialogMode::Result,
-                                 std::string(operation) + " interrupted — " + (name.empty() ? "drive" : name) + " removed",
-                                 std::move(text)});
+                                 move ? local("Move interrupted", "Přesun přerušen") :
+                                        local("Copy interrupted", "Kopírování přerušeno"),
+                                 disconnect + "\n" + text, false, DialogTone::Error});
             return;
         }
         if (transfer) {
-            _model.browser().refresh(false);
+            _model.browser().refresh(true);
             if (result || cancelled) {
-                status().set(result.message);
+                _package_dialog.set({});
+                status().set(cancelled ? "Transfer cancelled" : result.message);
             }
         } else {
             // Reconcile the drive before unlocking input, suppressing a duplicate removal notice.
@@ -711,7 +788,9 @@ void BrowserViewModel::tickStorage(uint32_t nowMs)
             _model.browser().refresh();
             _eject_mount_id = 0;
             if (result) {
-                showVolumeNotice({result.message});
+                if (!_model.browser().inPlaces()) _model.browser().showPlaces();
+                showVolumeNotice({std::string(local("Drive ejected", "Disk vysunut")) + "\n" +
+                                  local("Unplug ", "Lze odpojit ") + _eject_name, 0, DialogTone::Success});
             }
         }
         if (result && transfer && _pending_copy.cut) {
@@ -720,7 +799,18 @@ void BrowserViewModel::tickStorage(uint32_t nowMs)
         if (result || cancelled) {
             _package_dialog.set({});
         } else {
-            _package_dialog.set({PackageDialogMode::Result, dialog.title, result.message});
+            const bool busy = !transfer && result.message.find(" is in use.") != std::string::npos;
+            const bool conflict = result.message == "Name already exists";
+            const auto* title = busy ? local("Drive is busy", "Disk je zaneprázdněn") :
+                                conflict ? local("Name conflict", "Konflikt názvu") :
+                                transfer ? (_pending_copy.cut ? local("Move failed", "Přesun selhal") :
+                                                                local("Copy failed", "Kopírování selhalo")) :
+                                           local("Eject failed", "Vysunutí selhalo");
+            const auto message = busy ? std::string(local("Close files on ", "Zavřete soubory na disku ")) + _eject_name +
+                                      local(", then press E to eject again.", " a zkuste vysunutí znovu klávesou E.") :
+                                      localizedMessage(result.message);
+            _package_dialog.set({PackageDialogMode::Result, title, message, false,
+                                 busy || conflict ? DialogTone::Warning : DialogTone::Error});
         }
         return;
     }
@@ -730,13 +820,13 @@ void BrowserViewModel::tickStorage(uint32_t nowMs)
     _last_package_update = nowMs;
     if (transfer) {
         if (_transfer_control->cancelled()) {
-            dialog.text = "Cancelling transfer...";
+            dialog.text = local("Cancelling transfer…", "Ruším přenos…");
         } else {
-            dialog.text = _pending_copy.file.name + "\n" + std::to_string(_transfer_control->bytes()) + " bytes copied";
+            dialog.text = sizeInUnits(_transfer_control->bytes());
         }
     } else {
         std::lock_guard<std::mutex> lock(_eject_mutex);
-        dialog.text = _eject_progress;
+        dialog.text = localizedMessage(_eject_progress);
     }
     if (dialog.text != _package_dialog.get().text) {
         _package_dialog.set(std::move(dialog));
@@ -748,13 +838,10 @@ void BrowserViewModel::startPackageRead(const FileEntry& entry)
     clearHeldSelection();
     _password_attempts = 0;
     _package_source_mount_id = entry.mountId;
-    _package_log = "Reading package...";
-    _package_dialog.set({PackageDialogMode::Reading, "Debian package", _package_log});
-    _package_read = std::async(std::launch::async, [this, path = entry.path, mountId = entry.mountId] {
-        return internal::inspectDeb(path, mountId, [this](const std::string& details) {
-            std::lock_guard<std::mutex> lock(_package_log_mutex);
-            _package_log = details;
-        });
+    _package_dialog.set({PackageDialogMode::Reading, local("Debian package", "Balíček Debian"),
+                         local("Checking package…", "Ověřuji balíček…"), false, DialogTone::Normal, entry.name});
+    _package_read = std::async(std::launch::async, [path = entry.path, mountId = entry.mountId] {
+        return internal::inspectDeb(path, mountId);
     });
 }
 
@@ -763,10 +850,11 @@ void BrowserViewModel::startPackageInstall()
     if (!_prepared_deb) {
         return;
     }
-    _package_log = "Preparing installation...\n";
+    _package_log = local("Preparing installation…\n", "Připravuji instalaci…\n");
     std::string password;
     password.swap(_package_password);
-    _package_dialog.set({PackageDialogMode::Installing, "Installing package", _package_log});
+    _package_dialog.set({PackageDialogMode::Installing, local("Installing package", "Instaluji balíček"),
+                         _package_log, false, DialogTone::Normal, _prepared_deb->metadata.name});
     _package_install = std::async(std::launch::async, [this, password = std::move(password)]() mutable {
         return internal::installDeb(*_prepared_deb, password, [this](const std::string& chunk) {
             std::lock_guard<std::mutex> lock(_package_log_mutex);
@@ -790,8 +878,29 @@ void BrowserViewModel::tickPackage(uint32_t nowMs)
                 inspection = {nullptr, "Drive disconnected"};
             }
             _prepared_deb = std::move(inspection.package);
-            _package_dialog.set({_prepared_deb ? PackageDialogMode::Review : PackageDialogMode::Result, "Debian package",
-                                 std::move(inspection.text), inspection.installable});
+            PackageDialog review{_prepared_deb ? PackageDialogMode::Review : PackageDialogMode::Result,
+                                 local("Debian package", "Balíček Debian"), localizedMessage(inspection.text),
+                                 inspection.installable, inspection.installable ? DialogTone::Normal : DialogTone::Error};
+            if (_prepared_deb) {
+                const auto& metadata = _prepared_deb->metadata;
+                review.identity = metadata.name;
+                review.metadata = metadata.version + " · " + metadata.architecture;
+                review.rootScripts = metadata.hasInstallScripts;
+                review.text = inspection.problem.empty() ? "" : localizedMessage(inspection.problem) + "\n\n";
+                review.text += metadata.description;
+                review.text += std::string("\n\n") + local("Dependencies", "Závislosti") + "\n";
+                if (!metadata.preDepends.empty()) review.text += metadata.preDepends + "\n";
+                review.text += metadata.depends.empty() ? local("None", "Žádné") : metadata.depends;
+                if (inspection.installable) {
+                    review.text += local("\n\nKeep local configuration.", "\n\nMístní konfigurace zůstane zachována.");
+                    review.text += inspection.storeHelperPresent ?
+                        local("\nStore handles installation.", "\nInstalaci provede Store.") :
+                        local("\nWithout Store, use the system package manager.",
+                              "\nBez Store se použije systémový správce balíčků.");
+                    review.text += std::string(local("\n\nAPT plan (simulation)\n", "\n\nPlán APT (simulace)\n")) + inspection.plan;
+                }
+            }
+            _package_dialog.set(std::move(review));
         }
         if (_package_install.valid() && _package_install.wait_for(noWait) == std::future_status::ready) {
             const auto result = _package_install.get();
@@ -800,23 +909,27 @@ void BrowserViewModel::tickPackage(uint32_t nowMs)
                 (result.state == State::AuthenticationFailed && ++_password_attempts < 3)) {
                 _package_password.reserve(129);
                 const bool retry = result.state == State::AuthenticationFailed;
-                _package_dialog.set({PackageDialogMode::Password, "System password",
-                                     retry ? "Incorrect password. Try again.\n\n" : "Enter your sudo password.\n\n"});
+                _package_dialog.set({PackageDialogMode::Password, local("System password", "Systémové heslo"),
+                                     retry ? local("Incorrect password. Try again.\n\n", "Nesprávné heslo. Zkuste to znovu.\n\n") :
+                                             local("Enter your sudo password.\n\n", "Zadejte heslo sudo.\n\n"),
+                                     false, retry ? DialogTone::Warning : DialogTone::Normal});
             } else {
                 _prepared_deb.reset();
                 _package_dialog.set({PackageDialogMode::Result,
-                                     result.state == State::Installed ? "Installation complete" : "Installation failed",
-                                     result.state == State::AuthenticationFailed ? "Sudo authentication failed"
-                                                                                : result.message});
+                                     result.state == State::Installed ? local("Installation complete", "Instalace dokončena") :
+                                                                        local("Installation failed", "Instalace selhala"),
+                                     localizedMessage(result.state == State::AuthenticationFailed ? "Sudo authentication failed" : result.message),
+                                     false, result.state == State::Installed ? DialogTone::Success : DialogTone::Error});
             }
         }
     } catch (const std::exception& error) {
         _prepared_deb.reset();
-        _package_dialog.set({PackageDialogMode::Result, "Package operation failed", error.what()});
+        _package_dialog.set({PackageDialogMode::Result, local("Package operation failed", "Operace s balíčkem selhala"),
+                             error.what(), false, DialogTone::Error});
     }
 
     const auto mode = _package_dialog.get().mode;
-    if ((mode == PackageDialogMode::Reading || mode == PackageDialogMode::Installing) &&
+    if (mode == PackageDialogMode::Installing &&
         nowMs - _last_package_update >= 125) {
         _last_package_update = nowMs;
         auto dialog = _package_dialog.get();
@@ -852,7 +965,7 @@ void BrowserViewModel::handlePackageKey(uint32_t key)
     if (mode == PackageDialogMode::Transferring) {
         if (key == '\x1b' && _transfer_control->cancel()) {
             auto dialog = _package_dialog.get();
-            dialog.text = "Cancelling transfer...";
+            dialog.text = local("Cancelling transfer…", "Ruším přenos…");
             _package_dialog.set(std::move(dialog));
         }
         return;
@@ -871,6 +984,8 @@ void BrowserViewModel::handlePackageKey(uint32_t key)
     if (key == '\r' || key == '\n') {
         if (mode == PackageDialogMode::ConfirmEject) {
             startEject();
+        } else if (mode == PackageDialogMode::ConfirmTransfer) {
+            startTransfer();
         } else if ((mode == PackageDialogMode::Review && _package_dialog.get().allowInstall) ||
             (mode == PackageDialogMode::Password && !_package_password.empty())) {
             startPackageInstall();
@@ -879,9 +994,9 @@ void BrowserViewModel::handlePackageKey(uint32_t key)
     }
     if (mode != PackageDialogMode::Password) {
         if (key == files_key::Up || key == files_key::Down) {
-            _package_scroll.set(key == files_key::Up ? -18 : 18);
+            _package_scroll.set(key == files_key::Up ? -19 : 19);
         } else if (key == files_key::PageUp || key == files_key::PageDown) {
-            _package_scroll.set(key == files_key::PageUp ? -96 : 96);
+            _package_scroll.set(key == files_key::PageUp ? -76 : 76);
         }
     }
 }

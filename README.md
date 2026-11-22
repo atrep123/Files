@@ -4,7 +4,7 @@ File browser and preview app for M5Stack CardputerZero.
 
 ## Features
 
-- Browse folders with animated file menu and long-name scrolling
+- Browse folders with five-row lists, amber focus, and middle-ellipsized names
 - Copy, cut, paste, rename, delete, and inspect file metadata
 - Browse mounted removable drives and safely eject them from Places
 - Review and install local Debian packages after confirmation
@@ -193,3 +193,18 @@ sudo unshare --mount --propagation private ./tests/check_loop_mount.sh ./build/s
 
 The loop image test uses an isolated mount namespace and a temporary ext4 image.
 The package tests build local fixtures and simulate unsatisfied dependencies.
+
+### CardputerZero appearance and language
+
+Files uses the system message locale by default. Use **Tab → Language** to
+select English, Czech, or the system locale. The preference lives in
+`$XDG_CONFIG_HOME/cardputer-files/language` (or `~/.config/cardputer-files/language`).
+
+The amber row is the current selection. The file list shows five complete
+rows on the 320 × 170 display. Open **Details** to read a shortened name or
+path in full. The **New folder** action is available in the directory menu.
+**Paste** opens a confirmation for the pending copy or move.
+
+The SDL layout audit is built with `FILES_LAYOUT_AUDIT=ON`. Its scenarios use
+Xvfb, libXtst, Pillow, FFmpeg, and a private Linux mount namespace. Test
+packages and loop devices are isolated from the host by the audit runner.

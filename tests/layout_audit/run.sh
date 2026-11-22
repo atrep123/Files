@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 022
 if [[ $# -ne 2 || $EUID -ne 0 ]]; then
     echo "Usage inside an isolated WSL as root: $0 /path/to/Files-sdl-audit /path/to/empty-output-dir" >&2
     exit 2
@@ -33,6 +34,7 @@ clean() {
     if [[ "$base" == /tmp/files-audit-fixtures.* ]]; then rm -rf -- "$base"; fi
 }
 trap clean EXIT
+chmod 0755 "$base"
 mount -t tmpfs tmpfs /media
 mkdir -p "$base/destination"
 mount --bind "$base/destination" /root
@@ -46,21 +48,42 @@ install -m0755 "$binary" /usr/share/APPLaunch/bin/M5CardputerZero-Files
 cat >/usr/bin/udisksctl <<'EOF'
 #!/bin/sh
 [ "$1" = unmount ] && [ "$2" = --no-user-interaction ] && [ "$3" = -b ] || exit 2
+if [ -e "$UX2_ROOT/eject-fails" ]; then
+    echo 'Fixture: device could not be unmounted' >&2
+    exit 1
+fi
+sleep 0.40
 exec /usr/bin/umount -- "$4"
 EOF
 chmod 0755 /usr/bin/udisksctl
 gcc -shared -fPIC -o "$base/slow-copy.so" "$repo/tests/slow_copy.c" -ldl
+rm -f /usr/share/APPLaunch/bin/M5CardputerZero-AppStore
 export UX2_ROOT="$base" UX2_OUTPUT="$out" XDG_CACHE_HOME="$base/cache" FILES_AUDIT_BINARY="$binary"
 mv /usr/bin/apt-get /usr/bin/apt-get.ux2-original
 cat >/usr/bin/apt-get <<'EOF'
 #!/bin/sh
-case " $* " in *' -s '*) sleep 0.65;; esac
+case " $* " in *' --simulate '*)
+    if [ -e "$UX2_ROOT/apt-fails" ]; then
+        echo 'Fixture: APT could not resolve the package plan' >&2
+        exit 1
+    fi
+    ;;
+esac
 exec /usr/bin/apt-get.ux2-original "$@"
 EOF
 chmod 0755 /usr/bin/apt-get
 mv /usr/bin/sudo /usr/bin/sudo.files-audit-original
 cat >/usr/bin/sudo <<'EOF'
 #!/bin/sh
+if [ -e "$UX2_ROOT/install-fails" ]; then
+    sleep 0.55
+    echo 'Fixture: package manager returned an error' >&2
+    exit 2
+fi
+if [ -e "$UX2_ROOT/reject-password" ] && [ "$1" = -S ]; then
+    echo 'Sorry, incorrect password' >&2
+    exit 1
+fi
 if [ -e "$UX2_ROOT/require-password" ]; then
     echo 'sudo: a password is required' >&2
     exit 1
@@ -69,7 +92,9 @@ sleep 0.70
 exec /usr/bin/sudo.files-audit-original "$@"
 EOF
 chmod 0755 /usr/bin/sudo
+chmod 0777 "$out"
 xvfb-run -a -s '-screen 0 320x170x24' "${FILES_AUDIT_PYTHON:-$repo/.venv/bin/python}" "$repo/tests/layout_audit/scenarios.py" || {
-    for log in "$base"/*.log; do printf '%s\n' "$log"; tail -25 "$log"; done
+    shopt -s nullglob globstar
+    for log in "$base"/*.log "$base"/cs/*.log "$base"/en/*.log; do printf '%s\n' "$log"; tail -25 "$log"; done
     exit 1
 }

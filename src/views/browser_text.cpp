@@ -1,6 +1,7 @@
 #include "views/browser_text.hpp"
 
 #include "assets/font_assets.hpp"
+#include "core/files_language.hpp"
 #include "src/misc/lv_text_private.h"
 #include <algorithm>
 #include <filesystem>
@@ -9,111 +10,103 @@
 namespace files {
 namespace {
 
-constexpr char kEllipsis[] = "…";
-constexpr char kSeparator[] = " · ";
-
-int textWidth(const std::string& text, const lv_font_t* font = uiFont14())
+std::vector<size_t> characterEnds(const std::string& text)
 {
-    lv_point_t size{};
-    lv_text_get_size(&size, text.c_str(), font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    return size.x;
+    std::vector<size_t> ends{0};
+    for (uint32_t offset = 0; offset < text.size();) {
+        lv_text_encoded_next(text.c_str(), &offset);
+        ends.push_back(offset);
+    }
+    return ends;
+}
+
+bool fits(std::string_view text, int width, size_t limit, const lv_font_t* font)
+{
+    return textLength(text) <= limit && textWidth(text, font) <= width;
 }
 
 }  // namespace
 
+int textWidth(std::string_view text, const lv_font_t* font)
+{
+    lv_point_t size{};
+    const std::string value(text);
+    lv_text_get_size(&size, value.c_str(), font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    return size.x;
+}
+
+size_t textLength(std::string_view text)
+{
+    return std::count_if(text.begin(), text.end(), [](unsigned char byte) { return (byte & 0xC0) != 0x80; });
+}
+
+std::string fitText(std::string text, int width, const lv_font_t* font, size_t limit, bool preserveExtension)
+{
+    std::replace_if(text.begin(), text.end(), [](unsigned char c) { return c < 0x20 || c == 0x7F; }, ' ');
+    if (fits(text, width, limit, font)) return text;
+    const std::string ellipsis = "…";
+    if (!fits(ellipsis, width, limit, font)) return {};
+    const auto ends = characterEnds(text);
+    size_t left = 0;
+    size_t right = ends.size() - 1;
+
+    const auto build = [&](size_t first, size_t last) {
+        return text.substr(0, ends[first]) + ellipsis + text.substr(ends[last]);
+    };
+    if (preserveExtension) {
+        const auto suffix = std::filesystem::path(text).extension().string();
+        const auto stem = text.size() - suffix.size();
+        const auto boundary = std::lower_bound(ends.begin(), ends.end(), stem);
+        const auto candidate = static_cast<size_t>(boundary - ends.begin());
+        if (candidate > 1 && fits(build(1, candidate), width, limit, font)) right = candidate;
+    }
+    const int leftBudget = std::max(0, (width - textWidth(build(0, right), font)) * 2 / 3);
+    while (left + 1 < right && fits(build(left + 1, right), width, limit, font) &&
+           (left == 0 || textWidth(text.substr(0, ends[left + 1]), font) <= leftBudget)) ++left;
+    while (right > left + 1 && fits(build(left, right - 1), width, limit, font)) --right;
+    while (left + 1 < right && fits(build(left + 1, right), width, limit, font)) ++left;
+    return build(left, right);
+}
+
 std::string browserRowText(const FileEntry& entry, int width)
 {
-    std::string name = entry.name.empty() ? "(unnamed)" : entry.name;
-    std::replace_if(name.begin(), name.end(), [](char c) { return c == '\r' || c == '\n' || c == '\t'; }, ' ');
-    const auto freeSpace = entry.freeSpace.empty() ? std::string{} : "  |  " + entry.freeSpace;
-    const std::string full = name + freeSpace;
-    if (textWidth(full) <= width) {
-        return full;
-    }
+    const auto name = entry.name.empty() ? local("(unnamed)", "(bez názvu)") : entry.name;
+    return fitText(name, width, uiFont14(), std::string::npos, !entry.directory);
+}
 
-    const auto extension = entry.directory ? std::string{} : std::filesystem::path(name).extension().string();
-    size_t stemEnd = name.size() - extension.size();
-    std::string suffix = extension + freeSpace;
-    uint32_t firstLetter = 0;
-    lv_text_encoded_next(name.c_str(), &firstLetter);
-    if (textWidth(name.substr(0, firstLetter) + kEllipsis + suffix) > width) {
-        // For exceptionally long extensions, use both ends of the whole name.
-        stemEnd = name.size();
-        suffix = freeSpace;
-    }
-
-    std::vector<size_t> boundaries{0};
-    for (uint32_t offset = 0; offset < stemEnd;) {
-        lv_text_encoded_next(name.c_str(), &offset);
-        boundaries.push_back(offset);
-    }
-    const size_t characters = boundaries.size() - 1;
-    size_t left = 0;
-    size_t right = characters;
-    const auto shortened = [&](size_t first, size_t tail) {
-        return name.substr(0, boundaries[first]) + kEllipsis +
-               name.substr(boundaries[tail], stemEnd - boundaries[tail]) + suffix;
+std::string keyHints(std::initializer_list<std::string_view> primary,
+                     std::initializer_list<std::string_view> optional, int width)
+{
+    std::string text;
+    const auto add = [&](std::string_view part) {
+        if (part.empty()) return;
+        auto candidate = text;
+        if (!candidate.empty()) candidate += "  ";
+        candidate += part;
+        if (fits(candidate, width, 44, uiFont12())) text = std::move(candidate);
     };
-
-    // Favor the beginning, then fill the remaining pixels from the end.
-    const int leftBudget = (width - textWidth(kEllipsis + suffix)) * 2 / 3;
-    if (characters > 1 && textWidth(shortened(1, right)) <= width) {
-        left = 1;
-    }
-    while (left + 1 < characters && textWidth(name.substr(0, boundaries[left + 1])) <= leftBudget) {
-        ++left;
-    }
-    while (right > left + 1 && textWidth(shortened(left, right - 1)) <= width) {
-        --right;
-    }
-    while (left + 1 < right && textWidth(shortened(left + 1, right)) <= width) {
-        ++left;
-    }
-    return shortened(left, right);
+    for (const auto part : primary) add(part);
+    for (const auto part : optional) add(part);
+    return text;
 }
 
 std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, bool canMove, bool menu)
 {
-    std::string hint;
-    size_t moveAt = std::string::npos;
-    const auto add = [&hint](const char* part) {
-        if (!hint.empty()) {
-            hint += kSeparator;
-        }
-        hint += part;
-    };
-
-    if (menu) {
-        add("Esc Back");
-        if (canMove) {
-            moveAt = hint.size();
-            add("F↑ X↓");
-        }
-        add("Enter Select");
-    } else if (places && eject) {
-        add("Enter Open");
-        add("E Eject");
-        add("Tab Menu");
-    } else {
-        add(places ? "Hold Esc Exit" : "Esc Back");
-        if (canMove) {
-            moveAt = hint.size();
-            add("F↑ X↓");
-        }
-        if (eject) {
-            add("E Eject");
-        } else if (selected) {
-            add("Enter Open");
-        }
-        add("Tab Menu");
+    const auto* open = local("Enter Open", "Enter Otevřít");
+    const auto* back = local("Esc Back", "Esc Zpět");
+    const auto* actions = local("Tab Menu", "Tab Nabídka");
+    const auto* ejectHint = local("E Eject", "E Vysunout");
+    const auto* movement = canMove ? "F↑ X↓" : "";
+    const auto* usbHint = usb ? "U USB" : "";
+    if (menu) return keyHints({movement, local("Enter Select", "Enter Vybrat"), back, usbHint}, {eject ? ejectHint : ""});
+    if (eject) {
+        const auto keys = keyHints({selected ? open : "", ejectHint, actions, usbHint}, {movement, back});
+        if (usb && keys.find(usbHint) == std::string::npos)
+            return keyHints({selected ? "Enter ↵" : "", ejectHint, actions, usbHint}, {movement, back});
+        return keys;
     }
-    if (usb) {
-        add("U USB");
-    }
-    if (moveAt != std::string::npos && textWidth(hint, uiFont12()) > 300) {
-        hint.erase(moveAt, std::string(" · F↑ X↓").size());
-    }
-    return hint;
+    if (usb) return keyHints({movement, selected ? "Enter ↵" : "", actions, back, usbHint}, {});
+    return keyHints({movement, selected ? open : "", actions, places ? "" : back}, {});
 }
 
 }  // namespace files

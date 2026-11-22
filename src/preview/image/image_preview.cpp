@@ -2,6 +2,8 @@
 
 #include "assets/assets.h"
 #include "assets/font_assets.hpp"
+#include "core/files_language.hpp"
+#include "views/ui_style.hpp"
 #include "preview/common/bottom_key_bar.hpp"
 #include "preview/image/bmp_decoder.hpp"
 #include "preview/image/jpeg_decoder.hpp"
@@ -20,16 +22,14 @@ namespace {
 
 constexpr int32_t kScreenWidth                 = 320;
 constexpr int32_t kScreenHeight                = 170;
-constexpr int32_t kTitleWidth                  = 230;
-constexpr int32_t kTitleY                      = -5;
-constexpr int32_t kPreviewX                    = 20;
-constexpr int32_t kPreviewY                    = 18;
-constexpr int32_t kPreviewWidth                = 280;
-constexpr int32_t kPreviewHeight               = 110;
-constexpr int32_t kFullscreenX                 = 0;
-constexpr int32_t kFullscreenY                 = 0;
-constexpr int32_t kFullscreenWidth             = kScreenWidth;
-constexpr int32_t kFullscreenHeight            = kScreenHeight;
+constexpr int32_t kPreviewX                    = 8;
+constexpr int32_t kPreviewY                    = 20;
+constexpr int32_t kPreviewWidth                = 304;
+constexpr int32_t kPreviewHeight               = 130;
+constexpr int32_t kFullscreenX                 = 2;
+constexpr int32_t kFullscreenY                 = 2;
+constexpr int32_t kFullscreenWidth             = kScreenWidth - 4;
+constexpr int32_t kFullscreenHeight            = kScreenHeight - 4;
 constexpr int32_t kMoveStep                    = 16;
 // LVGL image scales are expressed as 1/256.  The preview viewport is only
 // 280x110, so camera photos can legitimately need a scale below 12.5% to fit
@@ -72,17 +72,7 @@ std::string lvglPath(const std::string& path)
 
 std::string fileTitle(const FileEntry& file)
 {
-    std::string name      = file.name.empty() ? file.path : file.name;
-    const std::string ext = file.extension;
-    if (!ext.empty() && name.size() > ext.size()) {
-        std::string tail = name.substr(name.size() - ext.size());
-        std::transform(tail.begin(), tail.end(), tail.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (tail == ext) {
-            name.resize(name.size() - ext.size());
-        }
-    }
-    return name;
+    return file.name.empty() ? file.path : file.name;
 }
 
 uint32_t fitScale(uint32_t imageWidth, uint32_t imageHeight, uint32_t boundsWidth, uint32_t boundsHeight)
@@ -153,14 +143,7 @@ public:
         _root->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
         _root->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
-        _title_label = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Label>(_root->raw_ptr());
-        _title_label->setText(_title.c_str());
-        _title_label->setTextFont(uiFont14());
-        _title_label->setTextColor(lv_color_hex(0x777777));
-        _title_label->setTextAlign(LV_TEXT_ALIGN_CENTER);
-        _title_label->setLongMode(LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
-        _title_label->setSize(kTitleWidth, LV_SIZE_CONTENT);
-        _title_label->align(LV_ALIGN_TOP_MID, 0, kTitleY);
+        _title_bar = ui::caption(_root->raw_ptr(), 0, _title, uiFont14());
 
         _viewport = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Container>(_root->raw_ptr());
         _viewport->setBgColor(lv_color_hex(0x000000));
@@ -195,9 +178,9 @@ public:
         }
 
         _error_label = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Label>(_viewport->raw_ptr());
-        _error_label->setText("No preview");
+        _error_label->setText(local("No preview", "Náhled není dostupný"));
         _error_label->setTextFont(uiFont14());
-        _error_label->setTextColor(lv_color_hex(0x777777));
+        _error_label->setTextColor(lv_color_hex(ui::error));
         _error_label->setTextAlign(LV_TEXT_ALIGN_CENTER);
         _error_label->setSize(lv_pct(100), LV_SIZE_CONTENT);
         _error_label->align(LV_ALIGN_CENTER, 0, 0);
@@ -223,7 +206,7 @@ public:
         _image.reset();
         _gif = nullptr;
         _viewport.reset();
-        _title_label.reset();
+        _title_bar = nullptr;
         _root.reset();
     }
 
@@ -268,9 +251,6 @@ public:
     void tick(uint32_t nowMs) override
     {
         (void)nowMs;
-        if (_key_bar) {
-            _key_bar->tick();
-        }
     }
 
 private:
@@ -280,7 +260,7 @@ private:
     DrawBufferPtr _jpeg_buffer;
     DrawBufferPtr _bmp_buffer;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _root;
-    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _title_label;
+    lv_obj_t* _title_bar = nullptr;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _viewport;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Image> _image;
     lv_obj_t* _gif = nullptr;
@@ -362,20 +342,16 @@ private:
             _viewport->setSize(kFullscreenWidth, kFullscreenHeight);
             _viewport->setRadius(0);
             lv_obj_set_style_clip_corner(_viewport->raw_ptr(), false, LV_PART_MAIN);
-            if (_title_label) {
-                _title_label->addFlag(LV_OBJ_FLAG_HIDDEN);
-            }
+            ui::hidden(_title_bar, true);
             if (_key_bar) {
                 _key_bar->setItems({});
             }
         } else {
             _viewport->setPos(kPreviewX, kPreviewY);
             _viewport->setSize(kPreviewWidth, kPreviewHeight);
-            lv_obj_remove_local_style_prop(_viewport->raw_ptr(), LV_STYLE_RADIUS, LV_PART_MAIN);
-            lv_obj_set_style_clip_corner(_viewport->raw_ptr(), true, LV_PART_MAIN);
-            if (_title_label) {
-                _title_label->removeFlag(LV_OBJ_FLAG_HIDDEN);
-            }
+            _viewport->setRadius(0);
+            lv_obj_set_style_clip_corner(_viewport->raw_ptr(), false, LV_PART_MAIN);
+            ui::hidden(_title_bar, false);
             if (_key_bar) {
                 _key_bar->setItems({
                     {'4', &image_icon_fullscreen},

@@ -2,6 +2,11 @@
 
 #include "assets/assets.h"
 #include "assets/font_assets.hpp"
+#include "core/files_language.hpp"
+#include "views/ui_style.hpp"
+#ifdef FILES_LAYOUT_AUDIT
+#include "layout_audit/layout_audit.hpp"
+#endif
 #include <algorithm>
 #if defined(__unix__) || defined(__APPLE__)
 #include <cerrno>
@@ -24,25 +29,24 @@ namespace {
 
 constexpr int32_t kScreenWidth          = 320;
 constexpr int32_t kScreenHeight         = 170;
-constexpr int32_t kPathBarHeight        = 21;
-constexpr int32_t kTextPanelY           = 0;
-constexpr int32_t kTextPanelH           = kScreenHeight;
-constexpr int32_t kTextPaddingX         = 10;
-constexpr int32_t kTextPaddingY         = 8;
+constexpr int32_t kPathBarHeight        = 20;
+constexpr int32_t kTextPanelY           = kPathBarHeight;
+constexpr int32_t kTextPanelH           = 130;
+constexpr int32_t kTextPaddingX         = 8;
+constexpr int32_t kTextPaddingY         = 2;
 constexpr int32_t kScrollStep           = 28;
 constexpr int32_t kPageScrollStep       = 128;
-constexpr int32_t kScrollbarX           = 314;
-constexpr int32_t kScrollbarY           = kTextPanelY + 7;
-constexpr int32_t kScrollbarW           = 2;
-constexpr int32_t kScrollbarH           = kTextPanelH - 14;
-constexpr int32_t kScrollbarMinH        = 18;
+constexpr int32_t kScrollbarX           = 315;
+constexpr int32_t kScrollbarY           = kTextPanelY;
+constexpr int32_t kScrollbarW           = 3;
+constexpr int32_t kScrollbarH           = kTextPanelH;
+constexpr int32_t kScrollbarMinH        = 12;
 constexpr uint32_t kHoldRepeatDelayMs   = 320;
 constexpr uint32_t kHoldRepeatMs        = 90;
-constexpr uint32_t kPathBarColor        = 0x313131;
 constexpr uint32_t kTextColor           = 0xFFFFFF;
-constexpr uint32_t kMutedTextColor      = 0xA7A7A7;
+constexpr uint32_t kMutedTextColor      = ui::error;
 constexpr uint32_t kScrollbarTrackColor = 0x2B2B2B;
-constexpr uint32_t kScrollbarThumbColor = 0x848484;
+constexpr uint32_t kScrollbarThumbColor = ui::secondary;
 constexpr uint64_t kMaxPreviewBytes     = 64 * 1024;
 constexpr size_t kTextSniffBytes        = 4096;
 
@@ -196,7 +200,7 @@ public:
     {
         _root = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Container>(parent);
         _root->setSize(kScreenWidth, kScreenHeight);
-        _root->setBgColor(lv_color_hex(0x191919));
+        _root->setBgColor(lv_color_hex(ui::black));
         _root->setBgOpa(LV_OPA_COVER);
         _root->setBorderWidth(0);
         _root->setPaddingAll(0);
@@ -204,7 +208,10 @@ public:
         _root->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
         createTextPanel();
-        createTitleBar();
+        ui::caption(_root->raw_ptr(), 0, _title.empty() ? local("Preview", "Náhled") : _title, uiFont14());
+        const auto footer = ui::caption(_root->raw_ptr(), 150, "");
+        _keys = lv_obj_get_child(footer, 0);
+        lv_obj_set_width(_keys, 252);
         createScrollbar();
         refreshScrollbar();
     }
@@ -215,8 +222,8 @@ public:
         _scrollbar_track.reset();
         _label.reset();
         _panel.reset();
-        _title_label.reset();
-        _path_bar.reset();
+        _keys = nullptr;
+        _last_scroll_top = _last_scroll_bottom = -1;
         _root.reset();
     }
 
@@ -281,8 +288,7 @@ private:
     std::string _title;
     std::string _content;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _root;
-    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _path_bar;
-    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _title_label;
+    lv_obj_t* _keys = nullptr;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _panel;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _label;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _scrollbar_track;
@@ -291,34 +297,6 @@ private:
     int32_t _last_scroll_bottom = -1;
     int _held_scroll_direction  = 0;
     uint32_t _next_scroll_at_ms = 0;
-
-    void createTitleBar()
-    {
-        _path_bar = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Container>(_panel->raw_ptr());
-        _path_bar->setSize(kScreenWidth - kTextPaddingX * 2 - 8, kPathBarHeight);
-        _path_bar->setPos(0, 0);
-        _path_bar->setBgColor(lv_color_hex(kPathBarColor));
-        _path_bar->setBgOpa(LV_OPA_COVER);
-        _path_bar->setBorderWidth(0);
-        _path_bar->setRadius(3);
-        _path_bar->setPaddingAll(0);
-        _path_bar->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
-        _path_bar->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
-
-        _title_label = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Label>(_path_bar->raw_ptr());
-        _title_label->setText(_title.empty() ? "Preview" : _title.c_str());
-        _title_label->setTextFont(uiFont10());
-        _title_label->setTextColor(lv_color_hex(kTextColor));
-        _title_label->setLongMode(LV_LABEL_LONG_MODE_WRAP);
-        _title_label->setSize(kScreenWidth - kTextPaddingX * 2 - 8, LV_SIZE_CONTENT);
-        lv_obj_set_style_text_align(_title_label->raw_ptr(), LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_update_layout(_title_label->raw_ptr());
-        const int32_t titleHeight = lv_obj_get_height(_title_label->raw_ptr());
-        const int32_t barHeight = std::max<int32_t>(kPathBarHeight, titleHeight);
-        _path_bar->setHeight(barHeight);
-        _title_label->setPos(0, (barHeight - titleHeight) / 2);
-        _label->setY(barHeight + 8);
-    }
 
     void createTextPanel()
     {
@@ -330,14 +308,17 @@ private:
         _panel->setPadding(kTextPaddingY, kTextPaddingY, kTextPaddingX, kTextPaddingX);
         _panel->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
         _panel->setScrollDir(LV_DIR_VER);
+#ifdef FILES_LAYOUT_AUDIT
+        lv_obj_add_flag(_panel->raw_ptr(), layout_audit::viewport_flag);
+#endif
 
         _label = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Label>(_panel->raw_ptr());
-        _label->setText(_content.empty() ? "" : _content.c_str());
-        _label->setTextFont(textPreviewFont());
+        _label->setText(_content == "Read failed" ? local("Read failed", "Čtení se nezdařilo") : _content.c_str());
+        _label->setTextFont(uiFont14());
         _label->setTextColor(lv_color_hex(_content == "Read failed" ? kMutedTextColor : kTextColor));
         _label->setLongMode(LV_LABEL_LONG_MODE_WRAP);
         _label->setSize(kScreenWidth - kTextPaddingX * 2 - 8, LV_SIZE_CONTENT);
-        _label->setPos(0, kPathBarHeight + 8);
+        _label->setPos(0, 0);
     }
 
     void createScrollbar()
@@ -348,7 +329,7 @@ private:
         _scrollbar_track->setBgColor(lv_color_hex(kScrollbarTrackColor));
         _scrollbar_track->setBgOpa(LV_OPA_COVER);
         _scrollbar_track->setBorderWidth(0);
-        _scrollbar_track->setRadius(kScrollbarW);
+        _scrollbar_track->setRadius(0);
         _scrollbar_track->setPaddingAll(0);
         _scrollbar_track->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
@@ -358,7 +339,7 @@ private:
         _scrollbar_thumb->setBgColor(lv_color_hex(kScrollbarThumbColor));
         _scrollbar_thumb->setBgOpa(LV_OPA_COVER);
         _scrollbar_thumb->setBorderWidth(0);
-        _scrollbar_thumb->setRadius(kScrollbarW);
+        _scrollbar_thumb->setRadius(0);
         _scrollbar_thumb->setPaddingAll(0);
         _scrollbar_thumb->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
     }
@@ -378,6 +359,8 @@ private:
         _last_scroll_bottom = bottom;
 
         const int32_t range = top + bottom;
+        const auto hint = keyHints({range > 0 ? "F↑ X↓" : "", local("Esc Back", "Esc Zpět")}, {});
+        lv_label_set_text(_keys, hint.c_str());
         if (range <= 0) {
             _scrollbar_track->setOpa(LV_OPA_TRANSP);
             _scrollbar_thumb->setOpa(LV_OPA_TRANSP);

@@ -6,6 +6,7 @@
 
 #include "assets/assets.h"
 #include "assets/font_assets.hpp"
+#include "views/ui_style.hpp"
 #include <core/color/color.hpp>
 #include <core/easing/ease.hpp>
 #include <miniaudio.h>
@@ -19,8 +20,8 @@
 namespace files {
 namespace {
 
-constexpr int32_t kTitleWidth              = 230;
-constexpr int32_t kTitleY                  = 0;
+constexpr int32_t kTitleWidth              = 304;
+constexpr int32_t kTitleY                  = 2;
 constexpr int32_t kWaveformWidth           = 280;
 constexpr int32_t kWaveformHeight          = 60;
 constexpr int32_t kWaveformX               = 0;
@@ -30,9 +31,8 @@ constexpr int32_t kWaveformBarPitch        = 3;
 constexpr int32_t kWaveformMinBarHeight    = 2;
 constexpr int32_t kWaveformMaxBarHeight    = 56;
 constexpr size_t kWaveformVisibleBarCount  = 94;
-constexpr size_t kWaveformEdgeFadeBarCount = 3;
 constexpr uint32_t kWaveformIdleColor      = 0xFFFFFF;
-constexpr uint32_t kWaveformPlayingColor   = 0x53D671;
+constexpr uint32_t kWaveformPlayingColor   = ui::success;
 constexpr float kWaveformColorDuration     = 0.4f;
 constexpr ma_uint32 kWaveformSampleRate    = 48000;
 constexpr ma_uint32 kWaveformChannels      = 1;
@@ -41,37 +41,20 @@ constexpr float kWaveformBarsPerSecond     = 24.0f;
 constexpr size_t kWaveformMaxDecodedBars   = 8192;
 constexpr int32_t kPlayheadWidth           = 2;
 constexpr int32_t kPlayheadHeight          = 64;
-constexpr uint32_t kPlayheadColor          = 0x557AFF;
+constexpr uint32_t kPlayheadColor          = ui::accent;
 constexpr int32_t kProgressBarX            = 20;
 constexpr int32_t kProgressBarY            = 106;
 constexpr int32_t kProgressBarWidth        = 280;
 constexpr int32_t kProgressBarHeight       = 5;
 constexpr int32_t kProgressBarRadius       = 2;
 constexpr uint32_t kProgressTrackColor     = 0x2F2F2F;
-constexpr uint32_t kProgressFillColor      = 0xDDDDDD;
+constexpr uint32_t kProgressFillColor      = ui::accent;
 constexpr int32_t kTimeLabelY              = 117;
 constexpr int32_t kTimeLabelWidth          = 96;
-constexpr uint32_t kTimeTextColor          = 0x777777;
-constexpr float kRootFadeDuration          = 0.18f;
-
-lv_opa_t fadeMaskOpacityFromFloat(float value)
-{
-    return static_cast<lv_opa_t>(std::clamp(static_cast<int>(std::round(value)), 0, 255));
-}
-
+constexpr uint32_t kTimeTextColor          = ui::secondary;
 std::string fileTitle(const AudioPreviewFile& file)
 {
-    std::string name      = file.entry.name.empty() ? file.entry.path : file.entry.name;
-    const std::string ext = file.entry.extension;
-    if (!ext.empty() && name.size() > ext.size()) {
-        std::string tail = name.substr(name.size() - ext.size());
-        std::transform(tail.begin(), tail.end(), tail.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (tail == ext) {
-            name.resize(name.size() - ext.size());
-        }
-    }
-    return name;
+    return file.entry.name.empty() ? file.entry.path : file.entry.name;
 }
 
 std::string timeText(float seconds)
@@ -93,17 +76,6 @@ std::string timeText(float seconds)
 std::string remainingTimeText(float durationSec, float progressSec)
 {
     return "-" + timeText(std::max(0.0f, durationSec - progressSec));
-}
-
-lv_opa_t edgeOpacity(size_t index, size_t count)
-{
-    const size_t edge_distance = std::min(index, count - 1 - index);
-    if (edge_distance >= kWaveformEdgeFadeBarCount) {
-        return LV_OPA_COVER;
-    }
-
-    const size_t fade_step = edge_distance + 1;
-    return static_cast<lv_opa_t>((LV_OPA_COVER * fade_step) / (kWaveformEdgeFadeBarCount + 1));
 }
 
 const void* speedIcon(float speed)
@@ -280,7 +252,7 @@ private:
             line_dsc.p1.y      = mid_y - half;
             line_dsc.p2.x      = x;
             line_dsc.p2.y      = mid_y + half;
-            line_dsc.opa       = edgeOpacity(i, kWaveformVisibleBarCount);
+            line_dsc.opa       = LV_OPA_COVER;
             lv_draw_line(layer, &line_dsc);
         }
     }
@@ -357,11 +329,12 @@ void AudioPreviewView::attach(lv_obj_t* parent)
     _root->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
     _root->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
+    ui::box(_root->raw_ptr(), 0, 0, 320, 20, ui::bar);
     _title_label = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Label>(_root->raw_ptr());
     _title_label->setTextFont(uiFont14());
-    _title_label->setTextColor(lv_color_hex(0x777777));
-    _title_label->setTextAlign(LV_TEXT_ALIGN_CENTER);
-    _title_label->setLongMode(LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    _title_label->setTextColor(lv_color_hex(ui::white));
+    _title_label->setTextAlign(LV_TEXT_ALIGN_LEFT);
+    _title_label->setLongMode(LV_LABEL_LONG_MODE_CLIP);
     _title_label->setSize(kTitleWidth, LV_SIZE_CONTENT);
     _title_label->align(LV_ALIGN_TOP_MID, 0, kTitleY);
 
@@ -393,20 +366,6 @@ void AudioPreviewView::attach(lv_obj_t* parent)
     _remaining_label->setSize(kTimeLabelWidth, LV_SIZE_CONTENT);
     _remaining_label->setPos(kProgressBarX + kProgressBarWidth - kTimeLabelWidth, kTimeLabelY);
 
-    _fade_mask = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Container>(_root->raw_ptr());
-    _fade_mask->setSize(lv_pct(100), lv_pct(100));
-    _fade_mask->setBgColor(lv_color_hex(0x000000));
-    _fade_mask->setBgOpa(LV_OPA_COVER);
-    _fade_mask->setBorderWidth(0);
-    _fade_mask->setPaddingAll(0);
-    _fade_mask->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
-    _fade_mask->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
-
-    _fade_mask_opacity.easingOptions().duration       = kRootFadeDuration;
-    _fade_mask_opacity.easingOptions().easingFunction = smooth_ui_toolkit::ease::ease_out_quad;
-    _fade_mask_opacity.teleport(255);
-    _fade_mask_opacity.move(0);
-
     _key_bar = std::make_unique<BottomKeyBar>(_root->raw_ptr());
 
     _view_model.state().observe(this, onStateChanged);
@@ -434,7 +393,6 @@ void AudioPreviewView::detach()
     _playhead.reset();
     _waveform.reset();
     _title_label.reset();
-    _fade_mask.reset();
     _root.reset();
 }
 
@@ -442,18 +400,8 @@ void AudioPreviewView::tick(uint32_t nowMs)
 {
     (void)nowMs;
 
-    if (_fade_mask) {
-        _fade_mask_opacity.update();
-        _fade_mask->setBgOpa(fadeMaskOpacityFromFloat(_fade_mask_opacity.directValue()));
-        if (_fade_mask_opacity.done() && _fade_mask_opacity.directValue() <= 0.0f) {
-            _fade_mask->addFlag(LV_OBJ_FLAG_HIDDEN);
-        }
-    }
     if (_waveform) {
         _waveform->tick();
-    }
-    if (_key_bar) {
-        _key_bar->tick();
     }
 }
 
@@ -468,7 +416,7 @@ void AudioPreviewView::renderState(AudioPlaybackState state)
 void AudioPreviewView::renderFile(const AudioPreviewFile& file)
 {
     if (_title_label) {
-        _title_label->setText(fileTitle(file));
+        ui::line(_title_label->raw_ptr(), fileTitle(file), kTitleWidth, uiFont14(), std::string::npos, true);
     }
     if (_waveform) {
         _waveform->load(file);

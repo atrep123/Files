@@ -32,6 +32,9 @@ struct DebInspection {
     std::unique_ptr<PreparedDeb> package;
     std::string text;
     bool installable = false;
+    std::string plan;
+    std::string problem;
+    bool storeHelperPresent = false;
 };
 
 enum class DebInstallState { Installed, PasswordRequired, AuthenticationFailed, Failed };

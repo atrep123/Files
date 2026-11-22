@@ -27,8 +27,6 @@ private:
 
     AudioPreviewViewModel& _view_model;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _root;
-    std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _fade_mask;
-    smooth_ui_toolkit::AnimateValue _fade_mask_opacity;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _title_label;
     std::unique_ptr<WaveformView> _waveform;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _playhead;

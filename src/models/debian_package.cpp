@@ -282,7 +282,8 @@ DebInspection inspectDeb(const fs::path& source, uint64_t mountId, const Command
         return {nullptr, "Damaged Debian package\n\n" + cleanCommandText(contents.output)};
     }
     if (!supportedArchitecture(metadata.architecture)) {
-        return {std::move(package), "Unsupported architecture: " + metadata.architecture + "\n\n" + details, false};
+        const auto problem = "Unsupported architecture: " + metadata.architecture;
+        return {std::move(package), problem + "\n\n" + details, false, {}, problem};
     }
     package->sha256 = sha256CommandOutput(readSnapshot(reviewed.fd, {"/usr/bin/sha256sum"}));
     if (package->sha256.empty()) {
@@ -298,11 +299,12 @@ DebInspection inspectDeb(const fs::path& source, uint64_t mountId, const Command
         package->planError = "Cannot verify the APT installation plan. Check dependencies and package manager state.\n\n" +
                              cleanCommandText(simulated.output);
         const auto error = package->planError;
-        return {std::move(package), details + "\n\n" + error, false};
+        return {std::move(package), details + "\n\n" + error, false, {}, error};
     }
     details += "\n\nKeep local configuration (dpkg --force-confdef --force-confold)."
                "\n\nAPT plan (simulation)\n" + cleanCommandText(plan);
-    return {std::move(package), std::move(details), true};
+    const bool store = trustedSystemExecutable("/usr/share/APPLaunch/bin/M5CardputerZero-AppStore");
+    return {std::move(package), std::move(details), true, cleanCommandText(plan), {}, store};
 #else
     (void)source;
     (void)mountId;
