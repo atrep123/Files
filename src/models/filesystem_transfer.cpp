@@ -533,7 +533,14 @@ StructureValidationResult validateStructure(const fs::path& source, const fs::pa
     return root;
 }
 
-FilesystemTransferResult stagedCopyNoReplace(const fs::path& source, const fs::path& destination)
+FilesystemTransferResult driveDisconnected(const fs::path& destination)
+{
+    return failureResult(FilesystemTransferFailure::DriveDisconnected, destination,
+                         std::make_error_code(std::errc::no_such_device), "drive disconnected");
+}
+
+FilesystemTransferResult stagedCopyNoReplace(const fs::path& source, const fs::path& destination,
+                                              const std::function<bool()>& connected)
 {
     fs::file_status sourceStatus;
     FilesystemTransferResult endpointResult = validateEndpoints(source, destination, sourceStatus);
@@ -568,6 +575,10 @@ FilesystemTransferResult stagedCopyNoReplace(const fs::path& source, const fs::p
     spdlog::info("FilesystemTransfer: validated staged copy source='{}' entries={}", source.string(),
                  validation.entries);
 
+    if (connected && !connected()) {
+        cleanupStage(stageDirectory);
+        return driveDisconnected(destination);
+    }
     error = renameNoReplace(stagedPayload, destination);
     if (error) {
         cleanupStage(stageDirectory);
@@ -582,7 +593,8 @@ FilesystemTransferResult stagedCopyNoReplace(const fs::path& source, const fs::p
     return FilesystemTransferResult{FilesystemTransferFailure::None, destination, {}, {}};
 }
 
-FilesystemTransferResult movePathNoReplace(const fs::path& source, const fs::path& destination)
+FilesystemTransferResult movePathNoReplace(const fs::path& source, const fs::path& destination,
+                                             const std::function<bool()>& connected)
 {
     fs::file_status sourceStatus;
     FilesystemTransferResult endpointResult = validateEndpoints(source, destination, sourceStatus);
@@ -590,6 +602,9 @@ FilesystemTransferResult movePathNoReplace(const fs::path& source, const fs::pat
         return endpointResult;
     }
 
+    if (connected && !connected()) {
+        return driveDisconnected(destination);
+    }
     spdlog::info("FilesystemTransfer: moving source='{}' destination='{}'", source.string(), destination.string());
     std::error_code error = renameNoReplace(source, destination);
     if (!error) {
@@ -614,7 +629,7 @@ FilesystemTransferResult movePathNoReplace(const fs::path& source, const fs::pat
     spdlog::info("FilesystemTransfer: captured source snapshot source='{}' entries={}", source.string(),
                  sourceBeforeCopy.nodes.size());
 
-    FilesystemTransferResult copyResult = stagedCopyNoReplace(source, destination);
+    FilesystemTransferResult copyResult = stagedCopyNoReplace(source, destination, connected);
     if (!copyResult) {
         return copyResult;
     }
@@ -632,6 +647,9 @@ FilesystemTransferResult movePathNoReplace(const fs::path& source, const fs::pat
                                  "' because it changed during copy: " + snapshotDetail);
     }
 
+    if (connected && !connected()) {
+        return driveDisconnected(destination);
+    }
     const fs::path hold = quarantineSource(source, error);
     if (hold.empty()) {
         return failureResult(FilesystemTransferFailure::SourceCleanupFailed, destination, error,
@@ -707,7 +725,8 @@ fs::path copyName(const fs::path& source, int index, std::error_code& error)
 
 }  // namespace
 
-FilesystemTransferResult copyPathToDirectory(const fs::path& source, const fs::path& destinationDirectory)
+FilesystemTransferResult copyPathToDirectory(const fs::path& source, const fs::path& destinationDirectory,
+                                            const std::function<bool()>& connected)
 {
     spdlog::info("FilesystemTransfer: copy requested source='{}' directory='{}'", source.string(),
                  destinationDirectory.string());
@@ -719,7 +738,7 @@ FilesystemTransferResult copyPathToDirectory(const fs::path& source, const fs::p
                                  destinationDirectory / source.filename(), error,
                                  "cannot compare source and destination directories");
         }
-        return stagedCopyNoReplace(source, destinationDirectory / source.filename());
+        return stagedCopyNoReplace(source, destinationDirectory / source.filename(), connected);
     }
 
     for (int index = 1; index <= kMaxCopyNameAttempts; ++index) {
@@ -728,7 +747,7 @@ FilesystemTransferResult copyPathToDirectory(const fs::path& source, const fs::p
             return failureResult(FilesystemTransferFailure::SourceNotFound, destinationDirectory, error,
                                  "cannot choose a name for the copy");
         }
-        FilesystemTransferResult result = stagedCopyNoReplace(source, destinationDirectory / name);
+        FilesystemTransferResult result = stagedCopyNoReplace(source, destinationDirectory / name, connected);
         if (result.failure != FilesystemTransferFailure::DestinationExists) {
             if (result) {
                 spdlog::info("FilesystemTransfer: same-directory copy selected name='{}'", name.string());
@@ -741,9 +760,10 @@ FilesystemTransferResult copyPathToDirectory(const fs::path& source, const fs::p
                          std::make_error_code(std::errc::file_exists), "no available automatic copy name");
 }
 
-FilesystemTransferResult movePathToDirectory(const fs::path& source, const fs::path& destinationDirectory)
+FilesystemTransferResult movePathToDirectory(const fs::path& source, const fs::path& destinationDirectory,
+                                            const std::function<bool()>& connected)
 {
-    return movePathNoReplace(source, destinationDirectory / source.filename());
+    return movePathNoReplace(source, destinationDirectory / source.filename(), connected);
 }
 
 const char* filesystemTransferFailureName(FilesystemTransferFailure failure)
@@ -771,6 +791,8 @@ const char* filesystemTransferFailureName(FilesystemTransferFailure failure)
             return "validation-failed";
         case FilesystemTransferFailure::PublishFailed:
             return "publish-failed";
+        case FilesystemTransferFailure::DriveDisconnected:
+            return "drive-disconnected";
         case FilesystemTransferFailure::SourceCleanupFailed:
             return "source-cleanup-failed";
         default:

@@ -112,7 +112,7 @@ std::string rowText(const FileEntry& entry)
     if (entry.name.empty()) {
         return "(unnamed)";
     }
-    return entry.name;
+    return entry.freeSpace.empty() ? entry.name : entry.name + "  |  " + entry.freeSpace;
 }
 
 const lv_image_dsc_t* imageForEntry(const FileEntry& entry)
@@ -160,6 +160,10 @@ MenuAction menuActionFor(BrowserAction action, const FileEntry* selectedEntry = 
             return {"Info", &image_icon_info};
         case BrowserAction::Delete:
             return {"Delete", &image_icon_delete};
+        case BrowserAction::Locations:
+            return {"Locations", &image_icon_folder};
+        case BrowserAction::Eject:
+            return {"Eject", &image_icon_info};
     }
     return {"Open", &image_icon_default};
 }
@@ -1266,6 +1270,91 @@ private:
     }
 };
 
+class BrowserView::PackagePanel {
+public:
+    explicit PackagePanel(lv_obj_t* parent)
+    {
+        _panel = lv_obj_create(parent);
+        lv_obj_remove_style_all(_panel);
+        lv_obj_set_size(_panel, 306, 156);
+        lv_obj_center(_panel);
+        lv_obj_set_style_bg_color(_panel, lv_color_hex(0x16232E), 0);
+        lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(_panel, lv_color_hex(0x52758E), 0);
+        lv_obj_set_style_border_width(_panel, 1, 0);
+        lv_obj_set_style_radius(_panel, 9, 0);
+        lv_obj_remove_flag(_panel, LV_OBJ_FLAG_SCROLLABLE);
+        _title = makeLabel(_panel, 11, 7, 282, lv_color_hex(0xFFFFFF));
+
+        _scroll = lv_obj_create(_panel);
+        lv_obj_remove_style_all(_scroll);
+        lv_obj_set_pos(_scroll, 11, 31);
+        lv_obj_set_size(_scroll, 283, 98);
+        lv_obj_set_scroll_dir(_scroll, LV_DIR_VER);
+        lv_obj_set_scrollbar_mode(_scroll, LV_SCROLLBAR_MODE_AUTO);
+        lv_obj_set_style_width(_scroll, 3, LV_PART_SCROLLBAR);
+        lv_obj_set_style_bg_color(_scroll, lv_color_hex(0x88ABC2), LV_PART_SCROLLBAR);
+        lv_obj_set_style_bg_opa(_scroll, LV_OPA_COVER, LV_PART_SCROLLBAR);
+        _text = makeLabel(_scroll, 0, 0, 272, lv_color_hex(0xE3ECF3));
+        _hint = makeLabel(_panel, 11, 134, 282, lv_color_hex(0x9FC6DA));
+        lv_obj_add_flag(_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    ~PackagePanel() { lv_obj_delete(_panel); }
+
+    void setDialog(const PackageDialog& dialog)
+    {
+        if (dialog.mode == PackageDialogMode::Closed) {
+            lv_obj_add_flag(_panel, LV_OBJ_FLAG_HIDDEN);
+            return;
+        }
+        lv_obj_remove_flag(_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(_panel);
+        lv_label_set_text(_title, dialog.title.c_str());
+        lv_label_set_text(_text, dialog.text.c_str());
+        const char* hint = "";
+        switch (dialog.mode) {
+            case PackageDialogMode::Review:
+                hint = dialog.allowInstall ? "F/X: Scroll   OK: Install   ESC: Cancel" : "F/X: Scroll   ESC: Back";
+                break;
+            case PackageDialogMode::Password:
+                hint = "OK: Continue   ESC: Cancel";
+                break;
+            case PackageDialogMode::Result:
+                hint = "F/X: Scroll   ESC: Back";
+                break;
+            default:
+                break;
+        }
+        lv_label_set_text(_hint, hint);
+        lv_obj_update_layout(_scroll);
+        if (dialog.mode == PackageDialogMode::Installing) {
+            lv_obj_scroll_by(_scroll, 0, -lv_obj_get_scroll_bottom(_scroll), LV_ANIM_OFF);
+        } else {
+            lv_obj_scroll_to_y(_scroll, 0, LV_ANIM_OFF);
+        }
+    }
+
+    void scroll(int offset) { lv_obj_scroll_by(_scroll, 0, -offset, LV_ANIM_OFF); }
+
+private:
+    lv_obj_t* _panel = nullptr;
+    lv_obj_t* _title = nullptr;
+    lv_obj_t* _scroll = nullptr;
+    lv_obj_t* _text = nullptr;
+    lv_obj_t* _hint = nullptr;
+
+    static lv_obj_t* makeLabel(lv_obj_t* parent, int x, int y, int width, lv_color_t color)
+    {
+        auto* label = lv_label_create(parent);
+        lv_obj_set_pos(label, x, y);
+        lv_obj_set_width(label, width);
+        lv_obj_set_style_text_color(label, color, 0);
+        lv_obj_set_style_text_font(label, uiFont12(), 0);
+        return label;
+    }
+};
+
 class BrowserView::StatusHud {
 public:
     explicit StatusHud(lv_obj_t* parent)
@@ -1438,6 +1527,7 @@ void BrowserView::onEnter(lv_obj_t* parent)
     _delete_confirm_dialog = std::make_unique<DeleteConfirmDialog>(_root->raw_ptr());
     _rename_confirm_dialog = std::make_unique<RenameConfirmDialog>(_root->raw_ptr(), _vm);
     _status_hud            = std::make_unique<StatusHud>(_root->raw_ptr());
+    _package_panel         = std::make_unique<PackagePanel>(_root->raw_ptr());
     _magic_view            = std::make_unique<MagicView>(_root->raw_ptr());
     if (!_tips_hud_shown) {
         _tips_hud       = std::make_unique<TipsHud>(_root->raw_ptr());
@@ -1454,6 +1544,8 @@ void BrowserView::onEnter(lv_obj_t* parent)
     _vm.pendingDelete().observe(this, onPendingDeleteChanged);
     _vm.pendingRename().observe(this, onPendingRenameChanged);
     _vm.pendingRenameName().observe(this, onPendingRenameNameChanged);
+    _vm.packageDialog().observe(this, onPackageDialogChanged);
+    _vm.packageScroll().observe(this, onPackageScroll);
     _magic_serial_seen = _vm.magic().get();
     _vm.magic().observe(this, onMagicChanged);
 
@@ -1495,6 +1587,8 @@ void BrowserView::destroy()
 {
     _render_ready = false;
     _vm.magic().removeObserver();
+    _vm.packageScroll().removeObserver();
+    _vm.packageDialog().removeObserver();
     _vm.pendingRenameName().removeObserver();
     _vm.pendingRename().removeObserver();
     _vm.pendingDelete().removeObserver();
@@ -1508,6 +1602,7 @@ void BrowserView::destroy()
     _magic_view.reset();
     _tips_hud.reset();
     _status_hud.reset();
+    _package_panel.reset();
     _rename_confirm_dialog.reset();
     _delete_confirm_dialog.reset();
     _cursor.reset();
@@ -1529,7 +1624,7 @@ void BrowserView::renderDirectory(const std::string& directory)
 {
     dismissTipsHud();
     if (_path_label) {
-        _path_label->setText(compactPath(directory).c_str());
+        _path_label->setText(directory.empty() ? "Locations" : compactPath(directory).c_str());
     }
 }
 
@@ -1652,7 +1747,7 @@ void BrowserView::updateCursorTarget()
         return;
     }
 
-    if (_vm.pendingDelete().get().active || _vm.pendingRename().get().active) {
+    if (_vm.pendingDelete().get().active || _vm.pendingRename().get().active || _vm.packageDialogOpen()) {
         _cursor->setTarget(false, {0, 0});
         return;
     }
@@ -1718,6 +1813,24 @@ void BrowserView::onPendingRenameChanged(void* context, const PendingRenameFile&
 void BrowserView::onPendingRenameNameChanged(void* context, const std::string& name)
 {
     static_cast<BrowserView*>(context)->renderPendingRenameName(name);
+}
+
+void BrowserView::onPackageDialogChanged(void* context, const PackageDialog& dialog)
+{
+    auto* self = static_cast<BrowserView*>(context);
+    if (self->_package_panel) {
+        self->dismissTipsHud();
+        self->_package_panel->setDialog(dialog);
+        self->updateCursorTarget();
+    }
+}
+
+void BrowserView::onPackageScroll(void* context, const int& offset)
+{
+    auto* self = static_cast<BrowserView*>(context);
+    if (self->_package_panel) {
+        self->_package_panel->scroll(offset);
+    }
 }
 
 void BrowserView::onMagicChanged(void* context, const uint32_t& magicSerial)

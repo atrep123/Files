@@ -56,6 +56,9 @@ struct FileEntry {
     bool hidden             = false;
     bool readable           = true;
     bool writable           = true;
+    uint64_t mountId        = 0;
+    bool mountRoot          = false;
+    std::string freeSpace;
 };
 
 struct FileOperationResult {

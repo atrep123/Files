@@ -244,6 +244,8 @@ if(BUILD_TESTING)
         src/models/file_browser_model.cpp
         src/models/file_type_registry.cpp
         src/models/filesystem_transfer.cpp
+        src/models/removable_volumes.cpp
+        src/models/command.cpp
     )
     target_include_directories(file_browser_model_tests PRIVATE
         "${FILES_SRC_DIR}"
@@ -254,6 +256,23 @@ if(BUILD_TESTING)
         Threads::Threads
     )
     add_test(NAME file_browser_model COMMAND file_browser_model_tests)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(storage_package_tests
+            tests/storage_package_test.cpp
+            src/core/files_config.cpp
+            src/core/files_types.cpp
+            src/models/file_browser_model.cpp
+            src/models/file_type_registry.cpp
+            src/models/filesystem_transfer.cpp
+            src/models/removable_volumes.cpp
+            src/models/debian_package.cpp
+            src/models/command.cpp
+        )
+        target_include_directories(storage_package_tests PRIVATE "${FILES_SRC_DIR}")
+        target_link_libraries(storage_package_tests PRIVATE smooth_ui_toolkit spdlog::spdlog Threads::Threads)
+        add_test(NAME storage_package COMMAND storage_package_tests)
+    endif()
 
     add_executable(jpeg_decoder_tests
         tests/jpeg_decoder_test.cpp

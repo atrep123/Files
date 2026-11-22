@@ -2,6 +2,7 @@
 
 #include "core/files_types.hpp"
 #include "models/file_type_registry.hpp"
+#include "models/removable_volumes.hpp"
 #include <filesystem>
 #include <tools/observable/single_observable.hpp>
 #include <string>
@@ -36,6 +37,10 @@ public:
     const FileEntry* selectedEntry() const;
     FileEntry entryWithMetadata(const FileEntry& entry) const;
     bool canGoBack() const;
+    bool inLocations() const { return _current_directory.get().empty(); }
+    void showLocations(bool rememberDirectory = true);
+    void refreshLocations();
+    FileOperationResult ejectSelected();
     void refresh(bool preserveSelected = true);
     void selectPrevious();
     void selectNext();
@@ -54,6 +59,7 @@ private:
     struct HistoryEntry {
         std::string directory;
         std::string selectedPath;
+        uint64_t mountId;
     };
 
     FileTypeRegistry _file_types;
@@ -62,10 +68,13 @@ private:
     smooth_ui_toolkit::SingleObservable<int> _selected_index{-1};
     smooth_ui_toolkit::SingleObservable<std::string> _status{""};
     std::vector<HistoryEntry> _history;
+    uint64_t _current_mount_id = 0;
 
     FileEntry makeEntry(const std::filesystem::directory_entry& item, bool includeMetadata) const;
     FileOperationResult readDirectoryEntries(const std::string& directory, std::vector<FileEntry>& entries) const;
     void setEntries(std::vector<FileEntry> entries, const std::string& preferredPath);
+    void refreshLocations(const std::string& preferredPath);
+    FileOperationResult transferEntry(const FileEntry& entry, const std::string& destinationDirectory, bool move);
     FileOperationResult refreshSelecting(const std::string& preferredPath);
     FileOperationResult goToDirectory(const std::string& path, bool pushHistory, const std::string& preferredPath);
 };

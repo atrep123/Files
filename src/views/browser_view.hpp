@@ -27,6 +27,7 @@ private:
     class MenuCursor;
     class DeleteConfirmDialog;
     class RenameConfirmDialog;
+    class PackagePanel;
     class StatusHud;
     class TipsHud;
 
@@ -39,6 +40,7 @@ private:
     std::unique_ptr<MenuCursor> _cursor;
     std::unique_ptr<DeleteConfirmDialog> _delete_confirm_dialog;
     std::unique_ptr<RenameConfirmDialog> _rename_confirm_dialog;
+    std::unique_ptr<PackagePanel> _package_panel;
     std::unique_ptr<StatusHud> _status_hud;
     std::unique_ptr<TipsHud> _tips_hud;
     std::unique_ptr<MagicView> _magic_view;
@@ -70,6 +72,8 @@ private:
     static void onPendingDeleteChanged(void* context, const PendingDeleteFile& pending);
     static void onPendingRenameChanged(void* context, const PendingRenameFile& pending);
     static void onPendingRenameNameChanged(void* context, const std::string& name);
+    static void onPackageDialogChanged(void* context, const PackageDialog& dialog);
+    static void onPackageScroll(void* context, const int& offset);
     static void onMagicChanged(void* context, const uint32_t& magicSerial);
 };
 

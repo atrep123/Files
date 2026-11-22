@@ -36,6 +36,7 @@ int main()
         files::FilesKeypad keypad;
         keypad.setKeyCallback(
             [&app](uint32_t key, const char* utf8, bool pressed) { return app.onLvglKeyState(key, utf8, pressed); });
+        keypad.setSensitiveInputCheck([&app] { return app.sensitiveInputActive(); });
         keypad.openDefault();
 #endif
 

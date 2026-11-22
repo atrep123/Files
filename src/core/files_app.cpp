@@ -157,7 +157,7 @@ void FilesApp::onKey(uint32_t key)
     if (key == files_key::Help) {
         if (_help_active) {
             closeHelpPage();
-        } else if (!textInputFocused()) {
+        } else if (!textInputFocused() && !_browser_vm.packageDialogOpen()) {
             showHelpPage();
         }
         return;
@@ -198,7 +198,7 @@ bool FilesApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
 {
     bool desktop_help = false;
 #if LV_USE_SDL
-    desktop_help = (lv_key == 'h' || lv_key == 'H') && !textInputFocused();
+    desktop_help = (lv_key == 'h' || lv_key == 'H') && !textInputFocused() && !sensitiveInputActive();
 #endif
     if (lv_key == files_key::Help || desktop_help) {
         if (pressed) {
@@ -319,6 +319,13 @@ bool FilesApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
             }
 #endif
             onKey('\t');
+        }
+        return true;
+    }
+
+    if (_router.page() == PageId::Browser && _browser_vm.packagePasswordActive()) {
+        if (pressed) {
+            _browser_vm.editPackagePassword(lv_key == LV_KEY_BACKSPACE ? 8 : lv_key, utf8);
         }
         return true;
     }
@@ -472,7 +479,9 @@ void FilesApp::showHelpPage()
     _help_page = createTextPreviewPage("Help",
                                        "Browse and edit file directories, and preview supported file formats.\n\n"
                                        "F / X / OK / ESC: navigation\n"
-                                       "TAB: menu\n"
+                                       "TAB: menu. Locations lists connected drives.\n"
+                                       "Select a drive, then TAB / Eject to disconnect.\n"
+                                       "OK on a .deb shows details. OK again installs.\n"
                                        "PgUp / PgDn: page");
     if (!_help_page) {
         spdlog::error("FilesApp: failed to create help page");
@@ -562,7 +571,7 @@ void FilesApp::releaseEscPress()
 bool FilesApp::browserEscapeHandledByView()
 {
     return _browser_vm.actionMenuOpen().get() || _browser_vm.pendingDelete().get().active ||
-           _browser_vm.pendingRename().get().active;
+           _browser_vm.pendingRename().get().active || _browser_vm.packageDialogOpen();
 }
 
 ViewModel* FilesApp::viewModelFor(PageId page)

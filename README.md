@@ -6,6 +6,8 @@ File browser and preview app for M5Stack CardputerZero.
 
 - Browse folders with animated file menu and long-name scrolling
 - Copy, cut, paste, rename, delete, and inspect file metadata
+- Browse mounted removable drives and safely eject them from Locations
+- Review and install local Debian packages after confirmation
 - Preview text files with CJK-capable Noto Sans fonts and scroll progress
 - Preview images with pan, zoom, counter-clockwise rotation, fullscreen, and GIF support
 - Play audio files with seek and 1x/2x/5x speed controls
@@ -119,6 +121,18 @@ Key controls:
 - Audio preview: `5` back 10s, `6` play/pause, `7` forward 10s, `8` speed, Esc/Left back
 - Video preview: Space pause/resume, Left/Right seek, Esc back
 
+On Linux, choose **Tab → Locations** to see Home, the file system and mounted
+removable drives with their available space. Open the drive to copy or paste as
+in any other folder. To disconnect it, select the drive in Locations and choose
+**Tab → Eject**. Files uses `udisksctl` for unmounting and powers off a USB device
+when its other volumes are no longer mounted. The OS mounts the drives.
+
+Open a `.deb` with **Enter**, scroll the package details with **F/X** or the
+arrow keys, and press **Enter** to install the reviewed package. **Esc** cancels
+the review. Installing uses the normal Debian package manager with sudo
+authorization. Packages for other architectures cannot be confirmed unless that
+architecture is configured on the system.
+
 Video preview uses `ffmpeg` directly on CardputerZero. Audio is sent to the
 PulseAudio sink named by `FILES_VIDEO_PULSE_SINK`, or to `default` when unset.
 
@@ -145,3 +159,15 @@ The generated package is written to `dist/`:
 ```text
 dist/m5cardputerzero-files_1.0.3_m5stack1_arm64.deb
 ```
+
+## Tests
+
+```bash
+cmake -S . -B build/sdl -DFILES_USE_SDL=ON -DBUILD_TESTING=ON
+cmake --build build/sdl -j8
+ctest --test-dir build/sdl --output-on-failure
+sudo unshare --mount --propagation private ./tests/check_loop_mount.sh ./build/sdl/storage_package_tests
+```
+
+The loop image test uses an isolated mount namespace and a temporary ext4 image.
+The package tests build local fixtures and simulate unsatisfied dependencies.

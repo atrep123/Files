@@ -1,8 +1,11 @@
 #pragma once
 
 #include "models/files_model.hpp"
+#include "models/debian_package.hpp"
 #include "view_models/view_model.hpp"
 #include <tools/observable/single_observable.hpp>
+#include <future>
+#include <mutex>
 
 namespace files {
 
@@ -14,11 +17,23 @@ enum class BrowserAction {
     Rename,
     Info,
     Delete,
+    Locations,
+    Eject,
+};
+
+enum class PackageDialogMode { Closed, Reading, Review, Password, Installing, Result };
+
+struct PackageDialog {
+    PackageDialogMode mode = PackageDialogMode::Closed;
+    std::string title;
+    std::string text;
+    bool allowInstall = false;
 };
 
 class BrowserViewModel : public ViewModel {
 public:
     BrowserViewModel(FilesRouter& router, FilesModel& model);
+    ~BrowserViewModel() override;
 
     PageId pageId() const override
     {
@@ -85,6 +100,11 @@ public:
         return _magic;
     }
 
+    auto& packageDialog() { return _package_dialog; }
+    bool packageDialogOpen() const { return _package_dialog.get().mode != PackageDialogMode::Closed; }
+    bool packagePasswordActive() const { return _package_dialog.get().mode == PackageDialogMode::Password; }
+    auto& packageScroll() { return _package_scroll; }
+    void editPackagePassword(uint32_t key, const char* utf8);
     const FileEntry* selectedEntry() const;
     bool canGoBack() const
     {
@@ -118,11 +138,28 @@ private:
     smooth_ui_toolkit::SingleObservable<PendingRenameFile> _pending_rename{PendingRenameFile{}};
     smooth_ui_toolkit::SingleObservable<std::string> _pending_rename_name{""};
     PendingCopyFile _pending_copy;
+    smooth_ui_toolkit::SingleObservable<PackageDialog> _package_dialog{PackageDialog{}};
+    smooth_ui_toolkit::SingleObservable<int> _package_scroll{0};
+    std::unique_ptr<internal::PreparedDeb> _prepared_deb;
+    std::string _package_password;
+    int _password_attempts = 0;
+    std::mutex _package_log_mutex;
+    std::string _package_log;
+    // The workers finish before the state they use is destroyed.
+    std::future<internal::DebInspection> _package_read;
+    std::future<internal::DebInstallResult> _package_install;
+    uint32_t _last_locations_check = 0;
+    uint32_t _last_package_update = 0;
     smooth_ui_toolkit::SingleObservable<uint32_t> _magic{0};
     int _held_selection_direction  = 0;
     uint32_t _next_selection_at_ms = 0;
     uint32_t _magic_count          = 0;
 
+    std::vector<BrowserAction> availableActions() const;
+    void handlePackageKey(uint32_t key);
+    void startPackageRead(const FileEntry& entry);
+    void startPackageInstall();
+    void tickPackage(uint32_t nowMs);
     void selectPreviousAction();
     void selectNextAction();
     void activateSelectedAction();
