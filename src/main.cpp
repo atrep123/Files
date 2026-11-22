@@ -2,6 +2,9 @@
 #include "hal/files_lvgl_hal.hpp"
 #include "input/files_keypad.hpp"
 #include "models/debian_install.hpp"
+#ifdef FILES_LAYOUT_AUDIT
+#include "layout_audit/layout_audit.hpp"
+#endif
 #include <cstring>
 #include <core/hal/hal.hpp>
 #include <lvgl.h>
@@ -56,6 +59,9 @@ int main(int argc, char** argv)
                 lv_timer_handler();
             }
             app.tick(lv_tick_get());
+#ifdef FILES_LAYOUT_AUDIT
+            files::layout_audit::poll(disp);
+#endif
             usleep(10000);
         }
 

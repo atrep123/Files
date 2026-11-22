@@ -5,6 +5,10 @@ project(M5CardputerZeroFiles VERSION 1.0.3 LANGUAGES C CXX ASM)
 option(FILES_USE_SDL "Use LVGL's SDL backend for desktop testing" ON)
 option(FILES_CONVERT_ASSETS "Convert image assets during CMake configure" ON)
 option(BUILD_TESTING "Build Files tests" OFF)
+option(FILES_LAYOUT_AUDIT "Enable SDL-only LVGL layout and RGB565 capture" OFF)
+if(FILES_LAYOUT_AUDIT AND NOT FILES_USE_SDL)
+    message(FATAL_ERROR "FILES_LAYOUT_AUDIT requires FILES_USE_SDL")
+endif()
 set(FILES_BIN_NAME "M5CardputerZero-Files" CACHE STRING "Output executable name")
 
 if(NOT DEFINED FILES_USE_PULSEAUDIO)
@@ -217,6 +221,15 @@ target_link_libraries(${FILES_BIN_NAME} PRIVATE
 set_target_properties(${FILES_BIN_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${FILES_ROOT}/dist"
 )
+
+if(FILES_LAYOUT_AUDIT)
+    find_package(PNG REQUIRED)
+    find_package(nlohmann_json REQUIRED)
+    target_sources(${FILES_BIN_NAME} PRIVATE tests/layout_audit/layout_audit.cpp)
+    target_include_directories(${FILES_BIN_NAME} PRIVATE "${FILES_ROOT}/tests")
+    target_compile_definitions(${FILES_BIN_NAME} PRIVATE FILES_LAYOUT_AUDIT)
+    target_link_libraries(${FILES_BIN_NAME} PRIVATE PNG::PNG nlohmann_json::nlohmann_json)
+endif()
 
 if(BUILD_TESTING)
     add_executable(cardputer_keymap_tests

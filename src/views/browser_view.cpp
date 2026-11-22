@@ -1,4 +1,7 @@
 #include "views/browser_view.hpp"
+#ifdef FILES_LAYOUT_AUDIT
+#include "layout_audit/layout_audit.hpp"
+#endif
 
 #include "views/browser_text.hpp"
 
@@ -211,6 +214,9 @@ public:
           _scroll_thumb(std::make_unique<smooth_ui_toolkit::lvgl_cpp::Container>(_panel->raw_ptr()))
     {
         _panel->setSize(kListWidth, kListHeight);
+#ifdef FILES_LAYOUT_AUDIT
+        lv_obj_add_flag(_panel->raw_ptr(), layout_audit::viewport_flag);
+#endif
         _panel->setPos(kListX, kListY);
         _panel->setBgOpa(LV_OPA_TRANSP);
         _panel->setBorderWidth(0);
@@ -393,6 +399,10 @@ private:
                 return;
             }
             isSelected = selected;
+#ifdef FILES_LAYOUT_AUDIT
+            if (selected) lv_obj_add_flag(container->raw_ptr(), layout_audit::selected_flag);
+            else lv_obj_remove_flag(container->raw_ptr(), layout_audit::selected_flag);
+#endif
             label->setTextColor(lv_color_hex(selected ? kTextColor : kMutedTextColor));
         }
 
@@ -636,6 +646,10 @@ public:
     {
         _panel->setSize(kListWidth + kActionMenuSideBleed * 2, kActionMenuHeight + kActionMenuBottomBleed);
         _panel->setPos(kListX - kActionMenuSideBleed, kActionMenuHiddenY);
+#ifdef FILES_LAYOUT_AUDIT
+        lv_obj_add_flag(_panel->raw_ptr(), layout_audit::viewport_flag);
+        lv_obj_add_flag(_panel->raw_ptr(), layout_audit::overlay_flag);
+#endif
         _panel->setBgColor(lv_color_hex(kActionMenuBgColor));
         _panel->setBorderWidth(0);
         _panel->setShadowWidth(0);
@@ -836,6 +850,12 @@ private:
                                   static_cast<int32_t>(std::round(keyframe.y)) + camera_y_offset);
             row.label->setTextColor(
                 lv_color_hex(static_cast<int32_t>(i) == selected_index ? kTextColor : kMutedTextColor));
+#ifdef FILES_LAYOUT_AUDIT
+            if (_open && static_cast<int32_t>(i) == selected_index)
+                lv_obj_add_flag(row.container->raw_ptr(), layout_audit::selected_flag);
+            else
+                lv_obj_remove_flag(row.container->raw_ptr(), layout_audit::selected_flag);
+#endif
         }
     }
 
@@ -886,6 +906,9 @@ public:
     {
         configureAnimation();
         applyAnimatedValue();
+#ifdef FILES_LAYOUT_AUDIT
+        lv_obj_add_flag(_panel->raw_ptr(), layout_audit::overlay_flag);
+#endif
         _panel->setBgColor(lv_color_hex(0x474747));
         _panel->setBgOpa(LV_OPA_COVER);
         _panel->setRadius(kDeleteDialogRadius);
@@ -1046,6 +1069,9 @@ public:
     {
         configureAnimation();
         applyAnimatedValue();
+#ifdef FILES_LAYOUT_AUDIT
+        lv_obj_add_flag(_panel->raw_ptr(), layout_audit::overlay_flag);
+#endif
         _panel->setBgColor(lv_color_hex(0x474747));
         _panel->setBgOpa(LV_OPA_COVER);
         _panel->setRadius(kDeleteDialogRadius);
@@ -1290,6 +1316,9 @@ public:
     explicit PackagePanel(lv_obj_t* parent)
     {
         _panel = lv_obj_create(parent);
+#ifdef FILES_LAYOUT_AUDIT
+        lv_obj_add_flag(_panel, layout_audit::overlay_flag);
+#endif
         lv_obj_remove_style_all(_panel);
         lv_obj_set_size(_panel, 306, 156);
         lv_obj_center(_panel);

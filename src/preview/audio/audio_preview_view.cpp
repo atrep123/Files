@@ -1,3 +1,7 @@
+#ifdef FILES_LAYOUT_AUDIT
+#include "layout_audit/layout_audit.hpp"
+#endif
+
 #include "preview/audio/audio_preview_view.hpp"
 
 #include "assets/assets.h"
@@ -297,6 +301,9 @@ public:
           _fill(std::make_unique<smooth_ui_toolkit::lvgl_cpp::Container>(_track->raw_ptr()))
     {
         _track->setSize(kProgressBarWidth, kProgressBarHeight);
+#ifdef FILES_LAYOUT_AUDIT
+        lv_obj_add_flag(_track->raw_ptr(), layout_audit::progress_flag);
+#endif
         _track->setPos(kProgressBarX, kProgressBarY);
         _track->setBgColor(lv_color_hex(kProgressTrackColor));
         _track->setBgOpa(LV_OPA_COVER);
