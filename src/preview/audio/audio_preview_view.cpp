@@ -291,7 +291,7 @@ public:
         _fill->setPos(0, 0);
         _fill->setBgColor(lv_color_hex(kProgressFillColor));
         _fill->setBgOpa(LV_OPA_COVER);
-        _fill->setRadius(kProgressBarRadius);
+        _fill->setRadius(0);
         _fill->setBorderWidth(0);
         _fill->setShadowWidth(0);
         _fill->setPaddingAll(0);
@@ -371,6 +371,9 @@ void AudioPreviewView::attach(lv_obj_t* parent)
     _remaining_label->setPos(kProgressBarX + kProgressBarWidth - kTimeLabelWidth, kTimeLabelY);
 
     _error_panel = ui::box(_root->raw_ptr(), 0, 20, 320, 130, ui::black);
+#ifdef FILES_LAYOUT_AUDIT
+    lv_obj_add_flag(_error_panel, layout_audit::overlay_flag);
+#endif
     auto* title = ui::label(_error_panel, 8, 52, 304, uiFont14(), ui::error);
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(title, local("× Cannot play audio", "× Zvuk nelze přehrát"));
@@ -420,8 +423,11 @@ void AudioPreviewView::renderState(AudioPlaybackState state)
     if (_waveform) {
         _waveform->setPlaying(state == AudioPlaybackState::Playing);
     }
-    ui::hidden(_error_panel, state != AudioPlaybackState::Error);
-    ui::hidden(_speed_label, state == AudioPlaybackState::Error);
+    const bool failed = state == AudioPlaybackState::Error;
+    ui::hidden(_error_panel, !failed);
+    ui::hidden(_speed_label, failed);
+    ui::hidden(_elapsed_label->raw_ptr(), failed);
+    ui::hidden(_remaining_label->raw_ptr(), failed);
     updateKeyBar();
 }
 

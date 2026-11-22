@@ -611,6 +611,7 @@ void BrowserView::onEnter(lv_obj_t* parent)
     auto* effects = ui::box(_root, 0, 0, 320, 150, ui::black);
     lv_obj_set_style_bg_opa(effects, LV_OPA_TRANSP, 0);
     _magic = std::make_unique<MagicView>(effects);
+    lv_obj_move_foreground(header);
     lv_obj_move_foreground(footer);
     _toast = ui::label(_root, 4, 126, 312, uiFont12());
 #ifdef FILES_LAYOUT_AUDIT

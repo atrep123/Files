@@ -615,6 +615,31 @@ def exercise_copy():
         marker.unlink(missing_ok=True)
 
 
+def exercise_copy_folder():
+    sample = base/"copy-folder"
+    sample.mkdir()
+    (sample/"01-target").mkdir()
+    source = sample/"02-source-folder"
+    source.mkdir()
+    (source/"data.bin").write_bytes(bytes(8 * 1024 * 1024))
+    app = launch("copy-folder", sample, LD_PRELOAD=str(base/"slow-copy.so"), FILES_COPY_MARKER=str(marker))
+    try:
+        key("x")
+        action(2)
+        key("f")
+        key("Return")
+        action(0)
+        key("Return")
+        wait_for(marker.exists)
+        capture("copy-folder-progress", expected=("02-source-folder", say("Transferred", "Přeneseno")))
+        key("Escape")
+        time.sleep(3.05)
+        assert not (sample/"01-target"/source.name).exists()
+    finally:
+        stop(app)
+        marker.unlink(missing_ok=True)
+
+
 def exercise_copy_disconnect(from_usb, move=False):
     sample = base/("move-to-usb" if move else ("from-usb" if from_usb else "to-usb"))
     sample.mkdir()
@@ -726,6 +751,11 @@ def exercise_package():
         capture("install-password-retry", expected=say("Incorrect password", "Nesprávné heslo"))
         key("a")
         capture("install-password-retry-one", expected="*")
+        key("Return", delay=.5)
+        capture("wait-password-retry", expected=say("Incorrect password", "Nesprávné heslo"), keep=False)
+        type_ascii("fixture")
+        key("Return")
+        capture("install-password-failed", expected=say("Sudo authentication failed", "Ověření hesla sudo selhalo"))
         clear_fixture("reject-password")
         key("Escape")
         clear_fixture("require-password")
@@ -963,6 +993,7 @@ for language in os.environ.get("FILES_AUDIT_LANGUAGES", "cs,en").split(","):
         "copy-target": lambda: exercise_copy_disconnect(False),
         "move": lambda: exercise_copy_disconnect(False, move=True), "package": exercise_package,
         "previews": exercise_previews, "errors": exercise_filesystem_errors,
+        "folder-copy": exercise_copy_folder,
     }
     selected = os.environ.get("FILES_AUDIT_SCENARIOS", ",".join(scenarios)).split(",")
     for scenario in selected:

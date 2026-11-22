@@ -520,9 +520,9 @@ void FilesApp::showHelpPage()
         "Enter on .deb · Review package",
         "F↑ X↓ Pohyb · Enter Otevřít\n"
         "Tab Nabídka · U USB · E Vysunout\n"
-        "Esc Zpět · Podržet Esc Ukončit\n"
+        "Esc Zpět · Držet Esc Ukončit\n"
         "PgUp/PgDn Listovat\n"
-        "Enter na .deb: Náhled"));
+        "Enter .deb · Náhled"));
     if (!_help_page) {
         spdlog::error("FilesApp: failed to create help page");
         return;
