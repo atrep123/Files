@@ -28,11 +28,14 @@ enum class FilesystemTransferFailure {
     SyncFailed,
 };
 
+enum class TransferDestination { NotPublished, PartialRemoved, CleanupFailed, Published };
+
 struct FilesystemTransferResult {
     FilesystemTransferFailure failure = FilesystemTransferFailure::None;
     std::filesystem::path destination;
     std::error_code error;
     std::string detail;
+    TransferDestination destinationState = TransferDestination::NotPublished;
 
     explicit operator bool() const
     {

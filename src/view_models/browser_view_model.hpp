@@ -33,7 +33,7 @@ struct PackageDialog {
 
 struct VolumeNotice {
     std::string text;
-    uint64_t openMountId = 0;
+    uint64_t connectedMountId = 0;
 };
 
 class BrowserViewModel : public ViewModel {
@@ -50,15 +50,19 @@ public:
     void onKey(uint32_t key) override;
     void onKeyState(uint32_t key, bool pressed) override;
     void tick(uint32_t nowMs) override;
-    void pollVolumes(uint32_t nowMs, bool helpActive = false);
-    bool handleVolumeNotice(uint32_t key);
+    void pollVolumes(uint32_t nowMs);
+    bool openUsb();
+    bool canOpenUsb() const;
+    bool ejectUsb();
+    bool hasRemovableVolumes() const { return _model.browser().hasRemovableVolumes(); }
     auto& volumeNotice() { return _volume_notice; }
     bool modalInputActive() const
     {
         return _action_menu_open.get() || _pending_delete.get().active ||
                _pending_rename.get().active || packageDialogOpen();
     }
-    bool canEjectFromPlaces() const;
+    bool canEject() const;
+    bool inPlaces() const { return _model.browser().inPlaces(); }
 
     smooth_ui_toolkit::SingleObservable<std::string>& currentDirectory()
     {
@@ -167,7 +171,10 @@ private:
     std::shared_ptr<internal::TransferControl> _transfer_control;
     std::mutex _eject_mutex;
     std::string _eject_progress;
-    std::future<FileOperationResult> _storage_operation;
+    std::future<FileTransferResult> _storage_operation;
+    uint64_t _transfer_destination_mount_id = 0;
+    std::string _transfer_source_name;
+    std::string _transfer_destination_name;
     uint64_t _eject_mount_id = 0;
     std::string _eject_name;
     smooth_ui_toolkit::SingleObservable<VolumeNotice> _volume_notice{VolumeNotice{}};

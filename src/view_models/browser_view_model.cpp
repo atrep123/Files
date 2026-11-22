@@ -124,12 +124,6 @@ void BrowserViewModel::onKey(uint32_t key)
         case '\t':
             openActionMenu();
             break;
-        case 'e':
-        case 'E':
-            if (canEjectFromPlaces()) {
-                requestEject();
-            }
-            break;
         case ' ':
             if (canGenerateMagic()) {
                 ++_magic_count;
@@ -227,31 +221,57 @@ void BrowserViewModel::advanceVolumeNotice()
     }
 }
 
-bool BrowserViewModel::handleVolumeNotice(uint32_t key)
+bool BrowserViewModel::canOpenUsb() const
 {
-    const auto mountId = _volume_notice.get().openMountId;
-    if (!mountId || (key != '\r' && key != '\n' && key != '\x1b')) {
+    const auto mode = _package_dialog.get().mode;
+    return hasRemovableVolumes() && !_pending_rename.get().active &&
+           (mode == PackageDialogMode::Closed || mode == PackageDialogMode::Review ||
+            mode == PackageDialogMode::Result || mode == PackageDialogMode::ConfirmEject);
+}
+
+bool BrowserViewModel::openUsb()
+{
+    if (!canOpenUsb()) {
         return false;
     }
-    advanceVolumeNotice();
-    if (key != '\x1b') {
-        clearHeldSelection();
-        const auto result = _model.browser().openVolume(mountId);
-        if (!result) {
-            showVolumeNotice({result.message});
-        } else if (_router.page() == PageId::Preview) {
-            _router.back();
-        }
+
+    if (packageDialogOpen()) {
+        handlePackageKey('\x1b');
+    }
+    if (_pending_delete.get().active) {
+        cancelDelete();
+    }
+    closeActionMenu();
+    clearHeldSelection();
+    const auto result = _model.browser().openRemovableVolumes();
+    _queued_notices.erase(std::remove_if(_queued_notices.begin(), _queued_notices.end(),
+        [](const auto& notice) { return notice.connectedMountId != 0; }), _queued_notices.end());
+    if (_volume_notice.get().connectedMountId) {
+        advanceVolumeNotice();
+    }
+    if (!result) {
+        showVolumeNotice({result.message});
+    } else if (_router.page() == PageId::Preview) {
+        _router.back();
     }
     return true;
 }
 
-void BrowserViewModel::pollVolumes(uint32_t nowMs, bool helpActive)
+bool BrowserViewModel::ejectUsb()
 {
-    // Only advertise Enter while it can open the drive.
-    if (_volume_notice.get().openMountId && (helpActive || modalInputActive())) {
-        _notice_started_at += nowMs - _last_tick;
+    if (!canEject() || packageDialogOpen() || _pending_delete.get().active || _pending_rename.get().active) {
+        return false;
     }
+    if (_router.page() == PageId::Preview) {
+        _router.back();
+    }
+    closeActionMenu();
+    requestEject();
+    return true;
+}
+
+void BrowserViewModel::pollVolumes(uint32_t nowMs)
+{
     _last_tick = nowMs;
     if (nowMs - _last_volume_check >= kVolumePollMs) {
         _last_volume_check = nowMs;
@@ -278,7 +298,7 @@ void BrowserViewModel::pollVolumes(uint32_t nowMs, bool helpActive)
         for (const auto& drive : changes.removed) {
             const auto id = drive.mount.id;
             _queued_notices.erase(std::remove_if(_queued_notices.begin(), _queued_notices.end(),
-                [id](const auto& notice) { return notice.openMountId == id; }), _queued_notices.end());
+                [id](const auto& notice) { return notice.connectedMountId == id; }), _queued_notices.end());
         }
         for (const auto& drive : changes.removed) {
             const auto id = drive.mount.id;
@@ -289,15 +309,17 @@ void BrowserViewModel::pollVolumes(uint32_t nowMs, bool helpActive)
                 internal::clearSecret(_package_password);
                 _package_dialog.set({PackageDialogMode::Result, "Debian package", "Drive disconnected"});
             }
-            if (_volume_notice.get().openMountId == id) {
+            if (_volume_notice.get().connectedMountId == id) {
                 advanceVolumeNotice();
             }
-            if (id != _eject_mount_id || _package_dialog.get().mode != PackageDialogMode::Ejecting) {
+            const bool transferDrive = mode == PackageDialogMode::Transferring &&
+                (id == _pending_copy.file.mountId || id == _transfer_destination_mount_id);
+            if (!transferDrive && (id != _eject_mount_id || mode != PackageDialogMode::Ejecting)) {
                 showVolumeNotice({drive.name + " removed"});
             }
         }
         for (const auto& drive : changes.arrived) {
-            showVolumeNotice({"USB disk " + drive.name + " connected — Enter: open", drive.mount.id});
+            showVolumeNotice({"USB disk " + drive.name + " connected — Press U to open", drive.mount.id});
         }
         if (_package_dialog.get().mode == PackageDialogMode::ConfirmEject && !_model.browser().volume(_eject_mount_id)) {
             _eject_mount_id = 0;
@@ -309,10 +331,10 @@ void BrowserViewModel::pollVolumes(uint32_t nowMs, bool helpActive)
     }
 }
 
-bool BrowserViewModel::canEjectFromPlaces() const
+bool BrowserViewModel::canEject() const
 {
     const auto* entry = selectedEntry();
-    return _model.browser().inPlaces() && entry && entry->mountRoot;
+    return _model.browser().currentMountId() || (entry && entry->mountRoot);
 }
 
 const FileEntry* BrowserViewModel::selectedEntry() const
@@ -423,6 +445,11 @@ void BrowserViewModel::pasteCopiedToCurrentDirectory()
 
     clearHeldSelection();
     _transfer_control = std::make_shared<internal::TransferControl>();
+    _transfer_destination_mount_id = _model.browser().currentMountId();
+    const auto* source = _model.browser().volume(_pending_copy.file.mountId);
+    const auto* destination = _model.browser().volume(_transfer_destination_mount_id);
+    _transfer_source_name = source ? source->name : std::string{};
+    _transfer_destination_name = destination ? destination->name : std::string{};
     _package_dialog.set({PackageDialogMode::Transferring, _pending_copy.cut ? "Move" : "Copy",
                          _pending_copy.file.name + "\n0 bytes copied"});
     _storage_operation = std::async(std::launch::async,
@@ -616,10 +643,10 @@ void BrowserViewModel::startEject()
     _eject_progress = "Checking " + _eject_name + "...";
     _package_dialog.set({PackageDialogMode::Ejecting, "Eject drive", _eject_progress});
     _storage_operation = std::async(std::launch::async, [this, mountId = _eject_mount_id] {
-        return FileBrowserModel::ejectDrive(mountId, [this](const std::string& message) {
+        return FileTransferResult{FileBrowserModel::ejectDrive(mountId, [this](const std::string& message) {
             std::lock_guard<std::mutex> lock(_eject_mutex);
             _eject_progress = message;
-        });
+        })};
     });
 }
 
@@ -628,14 +655,50 @@ void BrowserViewModel::tickStorage(uint32_t nowMs)
     auto dialog = _package_dialog.get();
     const bool transfer = dialog.mode == PackageDialogMode::Transferring;
     if (_storage_operation.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-        FileOperationResult result;
+        FileTransferResult outcome;
         try {
-            result = _storage_operation.get();
+            outcome = _storage_operation.get();
         } catch (const std::exception& error) {
-            result = {FileOperationStatus::Failed, error.what()};
+            outcome.operation = {FileOperationStatus::Failed, error.what()};
         }
+        const auto& result = outcome.operation;
         const bool cancelled = transfer && _transfer_control->cancelled();
         _transfer_control.reset();
+        if (transfer && (outcome.disconnectedSource || outcome.disconnectedDestination)) {
+            // Reconcile while the transfer still owns the removal message.
+            _last_volume_check = nowMs - kVolumePollMs;
+            pollVolumes(nowMs);
+            _model.browser().refresh(false);
+
+            std::string name = outcome.disconnectedSource ? _transfer_source_name : _transfer_destination_name;
+            if (outcome.disconnectedSource && outcome.disconnectedDestination &&
+                outcome.disconnectedDestination != outcome.disconnectedSource) {
+                if (!name.empty() && !_transfer_destination_name.empty()) {
+                    name += " and " + _transfer_destination_name;
+                } else if (name.empty()) {
+                    name = _transfer_destination_name;
+                }
+            }
+            using Destination = internal::TransferDestination;
+            std::string text;
+            switch (outcome.destinationState) {
+                case Destination::NotPublished: text = "No new destination file."; break;
+                case Destination::PartialRemoved: text = "Partial file removed."; break;
+                case Destination::CleanupFailed: text = "Could not remove the partial file."; break;
+                case Destination::Published: text = "Destination file was written."; break;
+            }
+            const bool move = _pending_copy.cut;
+            const char* operation = move ? "Move" : "Copy";
+            if (outcome.destinationState == Destination::Published || outcome.destinationState == Destination::CleanupFailed) {
+                text += "\n\nReconnect the drive and check the destination.";
+            } else {
+                text += move ? "\n\nReconnect the drive and move again." : "\n\nReconnect the drive and copy again.";
+            }
+            _package_dialog.set({PackageDialogMode::Result,
+                                 std::string(operation) + " interrupted — " + (name.empty() ? "drive" : name) + " removed",
+                                 std::move(text)});
+            return;
+        }
         if (transfer) {
             _model.browser().refresh(false);
             if (result || cancelled) {

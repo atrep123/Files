@@ -193,7 +193,7 @@ FileOperationResult ejectVolume(const RemovableVolume& volume, const CommandOutp
     if (!unmount || volumePresent(volume.mount.id)) {
         if (unmount.output.find("DeviceBusy") != std::string::npos ||
             unmount.output.find("target is busy") != std::string::npos) {
-            return {FileOperationStatus::Failed, volume.name + " is in use. Close open files and try again."};
+            return {FileOperationStatus::Failed, volume.name + " is in use.\nClose files on " + volume.name + ", then press E to eject again."};
         }
         return ejectError("Could not unmount " + volume.name, unmount);
     }

@@ -41,6 +41,7 @@ private:
     std::unique_ptr<RenameConfirmDialog> _rename_confirm_dialog;
     std::unique_ptr<PackagePanel> _package_panel;
     std::unique_ptr<StatusHud> _status_hud;
+    bool _usb_hint_visible = false;
     lv_obj_t* _key_bar = nullptr;
     std::unique_ptr<MagicView> _magic_view;
     uint32_t _magic_serial_seen = 0;

@@ -120,6 +120,9 @@ FilesApp::~FilesApp()
     if (_volume_notice) {
         lv_obj_delete(_volume_notice);
     }
+    if (_preview_usb_hint) {
+        lv_obj_delete(_preview_usb_hint);
+    }
     if (_help_page) {
         _help_page->detach();
         _help_page.reset();
@@ -168,16 +171,22 @@ void FilesApp::onKey(uint32_t key)
         return;
     }
 
+    if ((key == 'u' || key == 'U') && _browser_vm.openUsb()) {
+        closeHelpPage();
+        return;
+    }
+
+    if ((key == 'e' || key == 'E') && _browser_vm.ejectUsb()) {
+        closeHelpPage();
+        return;
+    }
+
     if (_help_active) {
         if (key == files_key::Left || key == '\x1b') {
             closeHelpPage();
         } else if (_help_page) {
             _help_page->onKey(key, _router);
         }
-        return;
-    }
-
-    if (!_browser_vm.modalInputActive() && _browser_vm.handleVolumeNotice(key)) {
         return;
     }
 
@@ -205,6 +214,7 @@ void FilesApp::onLvglKey(uint32_t lv_key, const char* utf8)
 
 bool FilesApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
 {
+    const bool storage_key = utf8 && (utf8[0] == 'u' || utf8[0] == 'U' || utf8[0] == 'e' || utf8[0] == 'E');
     bool desktop_help = false;
 #if LV_USE_SDL
     desktop_help = (lv_key == 'h' || lv_key == 'H') && !textInputFocused() && !sensitiveInputActive();
@@ -233,6 +243,13 @@ bool FilesApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
             sdl_page_key = takeSdlPageKey(lv_key);
         }
 #endif
+
+        if (storage_key) {
+            if (pressed) {
+                onKey(static_cast<uint32_t>(utf8[0]));
+            }
+            return true;
+        }
 
         uint32_t help_key = 0;
         if (lv_key == files_key::PageUp) {
@@ -429,8 +446,8 @@ bool FilesApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
         return true;
     }
 
-    if (utf8 && _router.page() == PageId::Browser && (utf8[0] == 'e' || utf8[0] == 'E')) {
-        onKey('e');
+    if (storage_key) {
+        onKey(static_cast<uint32_t>(utf8[0]));
         return true;
     }
 
@@ -449,7 +466,7 @@ bool FilesApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
 
 void FilesApp::tick(uint32_t nowMs)
 {
-    _browser_vm.pollVolumes(nowMs, _help_active);
+    _browser_vm.pollVolumes(nowMs);
     if (_esc_exit_armed && (_router.page() != PageId::Browser || _help_active || _browser_vm.canGoBack() ||
                             browserEscapeHandledByView())) {
         _esc_exit_armed = false;
@@ -494,10 +511,10 @@ void FilesApp::showHelpPage()
 
     _help_page = createTextPreviewPage("Help",
                                        "Browse and edit file directories, and preview supported file formats.\n\n"
-                                       "F / X / OK / ESC: navigation\n"
-                                       "TAB: menu. Places lists connected drives.\n"
-                                       "At Places, select a drive and press E to eject.\n"
-                                       "OK on a .deb shows details. OK again installs.\n"
+                                       "F↑ X↓: move. Enter: open. Esc: back.\n"
+                                       "Tab: menu. U: open USB or choose a drive in Places.\n"
+                                       "E: eject the selected drive in Places or the current drive.\n"
+                                       "Enter on a .deb shows details. Enter again installs.\n"
                                        "PgUp / PgDn: page");
     if (!_help_page) {
         spdlog::error("FilesApp: failed to create help page");
@@ -534,9 +551,18 @@ void FilesApp::createVolumeNotice()
     lv_obj_set_style_bg_color(_volume_notice, lv_color_hex(0x30302B), 0);
     lv_obj_set_style_bg_opa(_volume_notice, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(_volume_notice, 5, 0);
-    lv_obj_align(_volume_notice, LV_ALIGN_BOTTOM_MID, 0, -21);
+    lv_obj_align(_volume_notice, LV_ALIGN_BOTTOM_MID, 0, -25);
     lv_obj_remove_flag(_volume_notice, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(_volume_notice, LV_OBJ_FLAG_SCROLLABLE);
+    _preview_usb_hint = lv_label_create(lv_layer_top());
+    lv_label_set_text(_preview_usb_hint, "U USB");
+    lv_obj_set_style_text_font(_preview_usb_hint, uiFont12(), 0);
+    lv_obj_set_style_text_color(_preview_usb_hint, lv_color_hex(0xF2F2F2), 0);
+    lv_obj_set_style_bg_color(_preview_usb_hint, lv_color_hex(0x313131), 0);
+    lv_obj_set_style_bg_opa(_preview_usb_hint, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_hor(_preview_usb_hint, 5, 0);
+    lv_obj_align(_preview_usb_hint, LV_ALIGN_BOTTOM_RIGHT, -10, -2);
+    lv_obj_add_flag(_preview_usb_hint, LV_OBJ_FLAG_HIDDEN);
     _browser_vm.volumeNotice().observe(this, onVolumeNoticeChanged);
 }
 
@@ -549,9 +575,15 @@ void FilesApp::onVolumeNoticeChanged(void* context, const VolumeNotice& notice)
 
 void FilesApp::updateVolumeNoticeVisibility()
 {
+    const bool showUsb = _browser_vm.hasRemovableVolumes() &&
+                         (_help_active || _router.page() == PageId::Preview) && !hostRenderingSuspended();
+    if (showUsb) {
+        lv_obj_remove_flag(_preview_usb_hint, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(_preview_usb_hint, LV_OBJ_FLAG_HIDDEN);
+    }
     const auto& notice = _browser_vm.volumeNotice().get();
-    const bool visible = !notice.text.empty() &&
-                         (!notice.openMountId || (!_help_active && !_browser_vm.modalInputActive()));
+    const bool visible = !notice.text.empty() && !_help_active && !_browser_vm.modalInputActive();
     if (visible == !lv_obj_has_flag(_volume_notice, LV_OBJ_FLAG_HIDDEN)) {
         return;
     }
@@ -574,7 +606,7 @@ void FilesApp::createExitHint()
         return;
     }
 
-    lv_label_set_text(_exit_hint, "Hold ESC to exit");
+    lv_label_set_text(_exit_hint, "Hold Esc to exit");
     lv_obj_set_size(_exit_hint, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_text_font(_exit_hint, uiMonoFont12(), LV_PART_MAIN);
     lv_obj_set_style_text_color(_exit_hint, lv_color_hex(0xFED40D), LV_PART_MAIN);
@@ -627,7 +659,7 @@ void FilesApp::releaseEscPress()
 
 bool FilesApp::browserEscapeHandledByView()
 {
-    return _browser_vm.modalInputActive() || _browser_vm.volumeNotice().get().openMountId;
+    return _browser_vm.modalInputActive();
 }
 
 ViewModel* FilesApp::viewModelFor(PageId page)

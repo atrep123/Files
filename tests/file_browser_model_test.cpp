@@ -86,11 +86,14 @@ void testPlacesAndVolumeChanges()
                 !places[0].freeSpace.empty() && places[1].name == "Home" && places[2].name == "File system" &&
                 startedWithDisk.selectedIndex().get() == 0,
             "Places must select the drive before Home and File system");
+    require(startedWithDisk.hasRemovableVolumes(), "a mounted drive must enable the USB shortcut");
     const auto unchanged = startedWithDisk.updateVolumes({disk});
     require(unchanged.arrived.empty() && unchanged.removed.empty(), "no notification for a disk present at startup");
 
     files::FileBrowserModel startedWithoutDisk(start.string(), {});
     startedWithoutDisk.refresh();
+    require(!startedWithoutDisk.hasRemovableVolumes() && !startedWithoutDisk.openRemovableVolumes(),
+            "USB shortcut without a drive must leave navigation alone");
     require(startedWithoutDisk.currentDirectory().get() == start.string(), "retain the start folder without a disk");
     const auto connected = startedWithoutDisk.updateVolumes({disk});
     require(connected.arrived.size() == 1 && connected.arrived.front().mount.id == 101 &&
@@ -119,6 +122,19 @@ void testPlacesAndVolumeChanges()
                 replaced.arrived.size() == 1 && replaced.arrived.front().mount.id == 102 &&
                 !startedWithoutDisk.volume(101) && !startedWithoutDisk.openVolume(101),
             "a new mount at the same path must invalidate the original notification");
+    auto second = disk;
+    second.mount.id = 103;
+    second.mount.target = tree.root / "Druhý disk";
+    second.name = second.mount.target.filename().string();
+    fs::create_directory(second.mount.target);
+    files::FileBrowserModel multiple(start.string(), {disk, second});
+    selectName(multiple, "Home");
+    require(static_cast<bool>(multiple.openRemovableVolumes()) && multiple.inPlaces() &&
+                multiple.selectedEntry()->mountId == disk.mount.id, "multi-drive U should focus a drive in Places");
+    multiple.selectNext();
+    require(static_cast<bool>(multiple.openRemovableVolumes()) && multiple.selectedEntry()->mountId == second.mount.id,
+            "multi-drive U should preserve the selected drive");
+
     const auto disconnected = startedWithoutDisk.updateVolumes({});
     require(disconnected.removed.size() == 1 && disconnected.arrived.empty() &&
                 startedWithoutDisk.inPlaces() && indexOf(startedWithoutDisk, disk.name) < 0,

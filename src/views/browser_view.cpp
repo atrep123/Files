@@ -1,5 +1,7 @@
 #include "views/browser_view.hpp"
 
+#include "views/browser_text.hpp"
+
 #include "assets/assets.h"
 #include "assets/font_assets.hpp"
 #include "views/magic_view.hpp"
@@ -23,7 +25,7 @@ constexpr int32_t kPathTextWidth      = 300;
 constexpr int32_t kListX              = 0;
 constexpr int32_t kListY              = 24;
 constexpr int32_t kListWidth          = 320;
-constexpr int32_t kKeyBarHeight       = 17;
+constexpr int32_t kKeyBarHeight       = 23;
 constexpr int32_t kListHeight         = kScreenHeight - kListY - kKeyBarHeight;
 constexpr int32_t kIconX              = 10;
 constexpr int32_t kTextX              = 38;
@@ -105,14 +107,6 @@ std::string compactPath(const std::string& path)
     return fsPath.lexically_normal().string();
 }
 
-std::string rowText(const FileEntry& entry)
-{
-    if (entry.name.empty()) {
-        return "(unnamed)";
-    }
-    return entry.freeSpace.empty() ? entry.name : entry.name + "  |  " + entry.freeSpace;
-}
-
 const lv_image_dsc_t* imageForEntry(const FileEntry& entry)
 {
     if (entry.icon == "folder") {
@@ -161,7 +155,7 @@ MenuAction menuActionFor(BrowserAction action, const FileEntry* selectedEntry = 
         case BrowserAction::Places:
             return {"Places", &image_icon_folder};
         case BrowserAction::Eject:
-            return {"Eject", &image_icon_info};
+            return {"Eject"};
     }
     return {"Open", &image_icon_default};
 }
@@ -264,7 +258,7 @@ public:
         _row_data.reserve(entries.size());
         _data.option_list.reserve(entries.size());
         for (size_t i = 0; i < entries.size(); ++i) {
-            std::string text    = rowText(entries[i]);
+            std::string text    = browserRowText(entries[i], kMenuItemMaxWidth - kTextX - kMenuPaddingRight);
             const int32_t width = optionWidth(text);
             addOption({{0.0f, static_cast<float>(static_cast<int32_t>(i) * kMenuItemPitch), static_cast<float>(width),
                         static_cast<float>(kMenuItemHeight)},
@@ -356,7 +350,7 @@ private:
 
             label->setTextFont(uiFont14());
             label->setTextColor(lv_color_hex(kMutedTextColor));
-            label->setLongMode(LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+            label->setLongMode(LV_LABEL_LONG_MODE_CLIP);
             label->align(LV_ALIGN_LEFT_MID, kTextX, 0);
             container->addFlag(LV_OBJ_FLAG_HIDDEN);
         }
@@ -748,9 +742,17 @@ private:
             container->setScrollbarMode(LV_SCROLLBAR_MODE_OFF);
             container->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
-            icon->setSrc(action.icon);
-            icon->setSize(20, 20);
-            icon->setPos(kIconX, 0);
+            if (action.icon) {
+                icon->setSrc(action.icon);
+                icon->setSize(20, 20);
+                icon->setPos(kIconX, 0);
+            } else {
+                auto* symbol = lv_label_create(container->raw_ptr());
+                lv_label_set_text(symbol, LV_SYMBOL_EJECT);
+                lv_obj_set_style_text_font(symbol, LV_FONT_DEFAULT, 0);
+                lv_obj_set_style_text_color(symbol, lv_color_hex(kTextColor), 0);
+                lv_obj_align(symbol, LV_ALIGN_LEFT_MID, kIconX + 3, 0);
+            }
 
             label->setText(action.text);
             label->setTextFont(uiFont14());
@@ -1309,13 +1311,14 @@ public:
         lv_obj_set_style_bg_color(_scroll, lv_color_hex(0x88ABC2), LV_PART_SCROLLBAR);
         lv_obj_set_style_bg_opa(_scroll, LV_OPA_COVER, LV_PART_SCROLLBAR);
         _text = makeLabel(_scroll, 0, 0, 272, lv_color_hex(0xE3ECF3));
-        _hint = makeLabel(_panel, 11, 134, 282, lv_color_hex(0x9FC6DA));
+        _hint = makeLabel(_panel, 11, 134, 282, lv_color_hex(0xF2F2F2));
+        lv_obj_set_style_text_align(_hint, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_add_flag(_panel, LV_OBJ_FLAG_HIDDEN);
     }
 
     ~PackagePanel() { lv_obj_delete(_panel); }
 
-    void setDialog(const PackageDialog& dialog)
+    void setDialog(const PackageDialog& dialog, bool showUsb)
     {
         const bool modeChanged = _mode != dialog.mode;
         _mode = dialog.mode;
@@ -1327,33 +1330,43 @@ public:
         lv_obj_move_foreground(_panel);
         lv_label_set_text(_title, dialog.title.c_str());
         lv_label_set_text(_text, dialog.text.c_str());
+        lv_obj_update_layout(_panel);
+        const int bodyY = std::clamp<int>(11 + lv_obj_get_height(_title), 31, 81);
+        lv_obj_set_y(_scroll, bodyY);
+        lv_obj_set_height(_scroll, 129 - bodyY);
+        lv_obj_update_layout(_panel);
         const char* hint = "";
+        bool canScroll = false;
         switch (dialog.mode) {
             case PackageDialogMode::Reading:
                 hint = "Checking package and APT plan...";
                 break;
             case PackageDialogMode::Review:
-                hint = dialog.allowInstall ? "F/X: Scroll   OK: Install   ESC: Cancel" : "F/X: Scroll   ESC: Back";
+                hint = dialog.allowInstall ? "Enter Install · Esc Cancel" : "Esc Back";
+                canScroll = true;
                 break;
             case PackageDialogMode::Password:
-                hint = "OK: Continue   ESC: Cancel";
+                hint = "Enter Continue · Esc Cancel";
                 break;
             case PackageDialogMode::Installing:
                 hint = "Installation cannot be interrupted";
                 break;
             case PackageDialogMode::Transferring:
-                hint = "ESC: Cancel while copying";
+                hint = "Esc Cancel";
                 break;
             case PackageDialogMode::ConfirmEject:
-                hint = "Enter: Eject   ESC: Cancel";
+                hint = "Enter Eject · Esc Cancel";
                 break;
             case PackageDialogMode::Result:
-                hint = "F/X: Scroll   ESC: Back";
+                hint = "Esc Back";
+                canScroll = true;
                 break;
             default:
                 break;
         }
-        lv_label_set_text(_hint, hint);
+        _base_hint = hint;
+        _can_scroll = canScroll && lv_obj_get_scroll_top(_scroll) + lv_obj_get_scroll_bottom(_scroll) > 0;
+        setUsbHint(showUsb);
         lv_obj_update_layout(_panel);
         if (dialog.mode == PackageDialogMode::Installing) {
             lv_obj_scroll_by(_scroll, 0, -lv_obj_get_scroll_bottom(_scroll), LV_ANIM_OFF);
@@ -1365,7 +1378,20 @@ public:
         }
     }
 
-    void scroll(int offset) { lv_obj_scroll_by(_scroll, 0, -offset, LV_ANIM_OFF); }
+    void scroll(int offset) { lv_obj_scroll_by_bounded(_scroll, 0, -offset, LV_ANIM_OFF); }
+
+    void setUsbHint(bool visible)
+    {
+        if (_mode == PackageDialogMode::Closed) {
+            return;
+        }
+        const auto commands = _base_hint + (visible ? " · U USB" : "");
+        std::string hint = _can_scroll ? "F↑ X↓ Scroll · " + commands : commands;
+        if (_can_scroll && statusTextWidth(hint) > 282) {
+            hint = "F↑ X↓ · " + commands;
+        }
+        lv_label_set_text(_hint, hint.c_str());
+    }
 
 private:
     lv_obj_t* _panel = nullptr;
@@ -1374,6 +1400,8 @@ private:
     lv_obj_t* _text = nullptr;
     lv_obj_t* _hint = nullptr;
     PackageDialogMode _mode = PackageDialogMode::Closed;
+    std::string _base_hint;
+    bool _can_scroll = false;
 
     static lv_obj_t* makeLabel(lv_obj_t* parent, int x, int y, int width, lv_color_t color)
     {
@@ -1508,10 +1536,11 @@ void BrowserView::onEnter(lv_obj_t* parent)
     _key_bar = lv_label_create(_root->raw_ptr());
     lv_obj_set_size(_key_bar, kScreenWidth, kKeyBarHeight);
     lv_obj_align(_key_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_text_font(_key_bar, uiFont10(), 0);
-    lv_obj_set_style_text_color(_key_bar, lv_color_hex(0xD7D7D7), 0);
+    lv_obj_set_style_text_font(_key_bar, uiFont12(), 0);
+    lv_obj_set_style_text_color(_key_bar, lv_color_hex(0xF2F2F2), 0);
+    lv_obj_set_style_pad_hor(_key_bar, 10, 0);
+    lv_label_set_long_mode(_key_bar, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_style_text_align(_key_bar, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_pad_top(_key_bar, 2, 0);
     lv_obj_set_style_bg_color(_key_bar, lv_color_hex(kPathBarColor), 0);
     lv_obj_set_style_bg_opa(_key_bar, LV_OPA_COVER, 0);
     _delete_confirm_dialog = std::make_unique<DeleteConfirmDialog>(_root->raw_ptr());
@@ -1543,6 +1572,9 @@ void BrowserView::onExit()
 
 void BrowserView::tick(uint32_t nowMs)
 {
+    if (_usb_hint_visible != _vm.hasRemovableVolumes()) {
+        renderKeyBar();
+    }
     if (_file_list) {
         _file_list->update(nowMs);
     }
@@ -1595,16 +1627,18 @@ void BrowserView::destroy()
 
 void BrowserView::renderKeyBar()
 {
-    const char* text = "ESC Back  ·  F/X Move  ·  Enter Open  ·  TAB Menu";
-    if (_vm.actionMenuOpen().get()) {
-        text = "ESC Back  ·  F/X Move  ·  Enter Select  ·  TAB Close";
-    } else if (_vm.canEjectFromPlaces()) {
-        text = "Hold ESC Exit  ·  F/X Move  ·  Enter Open  ·  E Eject  ·  TAB Menu";
-    } else if (!_vm.canGoBack()) {
-        text = "Hold ESC Exit  ·  F/X Move  ·  Enter Open  ·  TAB Menu";
+    if (_usb_hint_visible != _vm.hasRemovableVolumes()) {
+        _usb_hint_visible = _vm.hasRemovableVolumes();
+        if (_package_panel) {
+            _package_panel->setUsbHint(_vm.canOpenUsb());
+        }
     }
+    const bool menu = _vm.actionMenuOpen().get();
+    const bool canMove = menu ? _vm.actionCount() > 1 : _vm.entries().get().size() > 1;
+    const auto text = browserKeyHint(_vm.inPlaces(), _vm.canEject(), _usb_hint_visible,
+                                     _vm.selectedEntry() != nullptr, canMove, menu);
     if (_key_bar && std::string_view(lv_label_get_text(_key_bar)) != text) {
-        lv_label_set_text(_key_bar, text);
+        lv_label_set_text(_key_bar, text.c_str());
     }
 }
 
@@ -1800,11 +1834,12 @@ void BrowserView::onPackageDialogChanged(void* context, const PackageDialog& dia
     auto* self = static_cast<BrowserView*>(context);
     if (self->_package_panel) {
         if (dialog.mode == PackageDialogMode::Closed) {
+            self->renderKeyBar();
             lv_obj_remove_flag(self->_key_bar, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(self->_key_bar, LV_OBJ_FLAG_HIDDEN);
         }
-        self->_package_panel->setDialog(dialog);
+        self->_package_panel->setDialog(dialog, self->_vm.canOpenUsb());
         self->updateCursorTarget();
     }
 }

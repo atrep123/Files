@@ -709,12 +709,8 @@ bool makeStagedDirectoriesOwnerAccessible(const fs::path& path, std::error_code&
     return true;
 }
 
-void cleanupStage(const fs::path& stageDirectory)
+bool cleanupStage(const fs::path& stageDirectory)
 {
-    if (stageDirectory.empty()) {
-        return;
-    }
-
     std::error_code cleanupError;
     std::string cleanupDetail;
     if (!makeStagedDirectoriesOwnerAccessible(stageDirectory, cleanupError, cleanupDetail)) {
@@ -728,6 +724,7 @@ void cleanupStage(const fs::path& stageDirectory)
         spdlog::warn("FilesystemTransfer: failed to clean stage '{}' error={} ({})", stageDirectory.string(),
                      cleanupError.value(), cleanupError.message());
     }
+    return !cleanupError;
 }
 
 FilesystemTransferResult restoreQuarantinedSource(const fs::path& source, const fs::path& hold,
@@ -896,66 +893,70 @@ FilesystemTransferResult stagedCopyNoReplace(const fs::path& source, const fs::p
     }
 
     const fs::path stagedPayload = stageDirectory / "payload";
+    const auto discardStage = [&](FilesystemTransferResult result) {
+        std::error_code error;
+        const bool hadPayload = fs::exists(fs::symlink_status(stagedPayload, error));
+        if (!cleanupStage(stageDirectory)) {
+            result.destinationState = TransferDestination::CleanupFailed;
+        } else if (hadPayload) {
+            result.destinationState = TransferDestination::PartialRemoved;
+        }
+        return result;
+    };
     spdlog::info("FilesystemTransfer: staging copy source='{}' stage='{}' destination='{}'", source.string(),
                  stagedPayload.string(), destination.string());
 
     bool syncFailure = false;
     error = copyNode(AT_FDCWD, source.c_str(), stagedPayload, filesystem, control, syncFailure);
     if (error) {
-        cleanupStage(stageDirectory);
         if (error == std::errc::operation_canceled) {
-            return cancelledTransfer(destination);
+            return discardStage(cancelledTransfer(destination));
         }
         if (error == std::errc::cross_device_link) {
-            return mountedSource(destination);
+            return discardStage(mountedSource(destination));
         }
-        return failureResult(syncFailure ? FilesystemTransferFailure::SyncFailed : FilesystemTransferFailure::CopyFailed,
-                             destination, error, syncFailure ? "cannot sync the staged copy"
-                                                            : "failed while copying into the staging directory");
+        const auto failure = syncFailure ? FilesystemTransferFailure::SyncFailed : FilesystemTransferFailure::CopyFailed;
+        const char* detail = syncFailure ? "cannot sync the staged copy" : "failed while copying into the staging directory";
+        return discardStage(failureResult(failure, destination, error, detail));
     }
 
     const StructureValidationResult validation = validateStructure(source, stagedPayload, control, filesystem);
     if (!validation.valid) {
-        cleanupStage(stageDirectory);
         if (validation.error == std::errc::operation_canceled) {
-            return cancelledTransfer(destination);
+            return discardStage(cancelledTransfer(destination));
         }
         if (validation.error == std::errc::cross_device_link) {
-            return mountedSource(destination);
+            return discardStage(mountedSource(destination));
         }
-        return failureResult(FilesystemTransferFailure::ValidationFailed, destination, validation.error,
-                             validation.detail);
+        return discardStage(failureResult(FilesystemTransferFailure::ValidationFailed, destination, validation.error,
+                                          validation.detail));
     }
     spdlog::info("FilesystemTransfer: validated staged copy source='{}' entries={}", source.string(),
                  validation.entries);
 
     if (connected && !connected()) {
-        cleanupStage(stageDirectory);
-        return driveDisconnected(destination);
+        return discardStage(driveDisconnected(destination));
     }
     const FileDescriptor parent(filesystem ? ::open(destination.parent_path().c_str(),
                                                    O_RDONLY | O_DIRECTORY | O_CLOEXEC) : -1);
     const FileDescriptor stage(filesystem ? ::open(stageDirectory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC) : -1);
     if (filesystem && (parent.fd < 0 || stage.fd < 0)) {
-        error = systemError();
-        cleanupStage(stageDirectory);
-        return failureResult(FilesystemTransferFailure::SyncFailed, destination, error,
-                             "cannot open the destination directories for syncing");
+        return discardStage(failureResult(FilesystemTransferFailure::SyncFailed, destination, systemError(),
+                                          "cannot open the destination directories for syncing"));
     }
     if (control && !control->beginCommit()) {
-        cleanupStage(stageDirectory);
-        return cancelledTransfer(destination);
+        return discardStage(cancelledTransfer(destination));
     }
     error = renameNoReplace(stagedPayload, destination);
     if (error) {
         if (control) {
             control->retry();
         }
-        cleanupStage(stageDirectory);
         const FilesystemTransferFailure failure = error == std::errc::file_exists
                                                       ? FilesystemTransferFailure::DestinationExists
                                                       : FilesystemTransferFailure::PublishFailed;
-        return failureResult(failure, destination, error, "cannot publish the staged copy without replacement");
+        return discardStage(failureResult(failure, destination, error,
+                                          "cannot publish the staged copy without replacement"));
     }
 
     const auto stageSyncError = filesystem ? syncDescriptor(stage.fd) : std::error_code{};
@@ -963,8 +964,10 @@ FilesystemTransferResult stagedCopyNoReplace(const fs::path& source, const fs::p
     if (filesystem) {
         const auto parentSyncError = syncDescriptor(parent.fd);
         if (const auto syncError = stageSyncError ? stageSyncError : parentSyncError) {
-            return failureResult(FilesystemTransferFailure::SyncFailed, destination, syncError,
-                                 "cannot sync the published destination; source kept");
+            auto result = failureResult(FilesystemTransferFailure::SyncFailed, destination, syncError,
+                                        "cannot sync the published destination; source kept");
+            result.destinationState = TransferDestination::Published;
+            return result;
         }
     }
     spdlog::info("FilesystemTransfer: published staged copy destination='{}'", destination.string());
@@ -1053,7 +1056,9 @@ FilesystemTransferResult movePathNoReplace(const fs::path& source, const fs::pat
     }
 
     if (connected && !connected()) {
-        return driveDisconnected(destination);
+        copyResult = driveDisconnected(destination);
+        copyResult.destinationState = TransferDestination::Published;
+        return copyResult;
     }
     const fs::path hold = quarantineSource(source, error);
     if (hold.empty()) {

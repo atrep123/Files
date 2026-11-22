@@ -89,7 +89,8 @@ void testMountList(const fs::path& temp)
     check(!volumes[1].powerOff && !volumes[2].powerOff, "SD and loop devices should only be unmounted");
 }
 
-fs::path buildDeb(const fs::path& base, const std::string& arch, const std::string& depends = {})
+fs::path buildDeb(const fs::path& base, const std::string& arch, const std::string& depends = {},
+                  const char* script = nullptr)
 {
     fs::create_directories(base / "DEBIAN");
     const auto docs = base / "usr/share/doc/cz-zkouska-files";
@@ -103,6 +104,12 @@ fs::path buildDeb(const fs::path& base, const std::string& arch, const std::stri
     }
     control << "Description: Files test package\n extra text\n .\n after a blank line\n";
     control.close();
+    if (script) {
+        const auto path = base / "DEBIAN" / script;
+        std::ofstream(path) << "#!/bin/sh\nexit 0\n";
+        fs::permissions(path, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+                        fs::perm_options::add);
+    }
     const auto deb = base.string() + " ; zkouška.deb";
     const auto build = runCommand({"/usr/bin/dpkg-deb", "--build", "--root-owner-group", base.string(), deb});
     check(static_cast<bool>(build), build.output.c_str());
@@ -143,6 +150,8 @@ void testDeb(const fs::path& temp)
                   earlyDetails.find("extra text") != std::string::npos,
               "package metadata must be available before the install plan");
         check(review.installable && review.package != nullptr, review.text.c_str());
+        check(review.text.find("Install scripts run as root") == std::string::npos,
+              "package without scripts should not show the package script warning");
         check(review.text.find("Depends: None") != std::string::npos &&
                   review.text.find("extra text\n\nafter a blank line") != std::string::npos,
               "package review is missing metadata");
@@ -152,6 +161,13 @@ void testDeb(const fs::path& temp)
         check(fs::file_size(staged) > fs::file_size(path), "review did not pin the staged bytes");
     }
     check(!fs::exists(staged.parent_path()), "cancelling review must remove the staged package");
+
+    const auto withScript = buildDeb(temp / "scripts", "all", {}, "postinst");
+    std::string reading;
+    const auto scripted = inspectDeb(withScript, 0, [&](const auto& details) { reading = details; });
+    constexpr auto warning = "Package: cz-zkouska-files\nInstall scripts run as root\n";
+    check(scripted.installable && scripted.text.rfind(warning, 0) == 0 && reading.rfind(warning, 0) == 0,
+          scripted.text.c_str());
 
     const auto invalid = inspectDeb(path);
     check(!invalid.installable && invalid.text.find("Invalid or unreadable") != std::string::npos,
@@ -218,6 +234,7 @@ void testDisconnectDuringCopy(const fs::path& mount, const fs::path& temp)
         return detached && destination.connected();
     });
     check(copiedIntoStage && copied.failure == FilesystemTransferFailure::DriveDisconnected &&
+              copied.destinationState == TransferDestination::PartialRemoved &&
               fs::is_regular_file(source) && !fs::exists(mount / source.filename()) &&
               !fs::exists(destination.path() / source.filename()), "copy was published after disconnection");
     for (const auto& item : fs::directory_iterator(destination.path())) {
@@ -256,7 +273,8 @@ void testLoop(const fs::path& mount, const fs::path& temp)
     copied = browser.copyEntryTo(remote, temp.string());
     check(static_cast<bool>(copied) && fs::exists(temp / "z disku č. 2.txt"), copied.message.c_str());
 
-    check(static_cast<bool>(browser.openVolume(root.mountId)), "could not open the drive from hotplug");
+    check(static_cast<bool>(browser.openRemovableVolumes()) && browser.currentMountId() == root.mountId,
+          "single-drive shortcut could not open the connected drive");
     check(fs::create_directory(mount / "Podadresář"), "could not create test subdirectory");
     browser.refresh();
     selectByName(browser, "Podadresář");
@@ -281,8 +299,11 @@ void testLoop(const fs::path& mount, const fs::path& temp)
     check(departure.leftVolume && departure.removed.size() == 1 && browser.inPlaces(),
           "unmount must report the removal and return active browsing to Places");
     std::ofstream(mount / "z disku č. 2.txt") << "underlying path; must not be copied\n";
-    const auto lost = browser.copyEntryTo(remote, temp.string());
-    check(!lost && lost.message == "Drive disconnected" && !fs::exists(temp / "z disku č. 2 copy.txt"),
+    const auto lost = FileBrowserModel::performTransfer(remote, temp.string(), 0, false);
+    check(!lost.operation && lost.operation.message == "Drive disconnected" &&
+              lost.disconnectedSource == root.mountId && !lost.disconnectedDestination &&
+              lost.destinationState == TransferDestination::NotPublished &&
+              !fs::exists(temp / "z disku č. 2 copy.txt"),
           "a disconnected mount must never fall through to the underlying filesystem");
     std::cout << "Loop image visible, copy in both directions, unmount and stale clipboard verified\n";
 }

@@ -232,6 +232,21 @@ VolumeChanges FileBrowserModel::updateVolumes(std::vector<internal::RemovableVol
     return changes;
 }
 
+FileOperationResult FileBrowserModel::openRemovableVolumes()
+{
+    if (_volumes.empty()) {
+        return disconnected();
+    }
+    if (_volumes.size() == 1) {
+        return openVolume(_volumes.front().mount.id);
+    }
+    const auto* selected = selectedEntry();
+    const auto* current = volume(_current_mount_id);
+    const auto* preferred = inPlaces() && selected && selected->mountRoot ? volume(selected->mountId) : current;
+    showPlaces((preferred ? preferred : &_volumes.front())->mount.target.string());
+    return {};
+}
+
 FileOperationResult FileBrowserModel::openVolume(uint64_t mountId)
 {
     const auto* drive = volume(mountId);
@@ -274,6 +289,13 @@ void FileBrowserModel::refreshPlaces(const std::string& preferredPath)
             return a.path == b.path && a.name == b.name && a.mountId == b.mountId && a.freeSpace == b.freeSpace;
         })) {
         setEntries(std::move(list), preferredPath);
+    } else if (!preferredPath.empty()) {
+        const auto it = std::find_if(previous.begin(), previous.end(), [&preferredPath](const auto& entry) {
+            return entry.path == preferredPath;
+        });
+        if (it != previous.end()) {
+            _selected_index.set(static_cast<int>(it - previous.begin()));
+        }
     }
 }
 
@@ -551,7 +573,7 @@ FileOperationResult FileBrowserModel::transferEntry(const FileEntry& entry, cons
                                                     bool move)
 {
     const auto destinationMountId = destinationDirectory == _current_directory.get() ? _current_mount_id : 0;
-    const auto result = performTransfer(entry, destinationDirectory, destinationMountId, move);
+    const auto result = performTransfer(entry, destinationDirectory, destinationMountId, move).operation;
     if (result) {
         refresh(false);
         _status.set(result.message);
@@ -559,12 +581,12 @@ FileOperationResult FileBrowserModel::transferEntry(const FileEntry& entry, cons
     return result;
 }
 
-FileOperationResult FileBrowserModel::performTransfer(const FileEntry& entry, const std::string& destinationDirectory,
-                                                      uint64_t destinationMountId, bool move,
-                                                      internal::TransferControl* control)
+FileTransferResult FileBrowserModel::performTransfer(const FileEntry& entry, const std::string& destinationDirectory,
+                                                     uint64_t destinationMountId, bool move,
+                                                     internal::TransferControl* control)
 {
     if (entry.mountRoot || destinationDirectory.empty()) {
-        return errorResult(FileOperationStatus::InvalidSelection, "Open a folder first");
+        return {errorResult(FileOperationStatus::InvalidSelection, "Open a folder first")};
     }
     const fs::path source(entry.path);
     if (!destinationMountId) {
@@ -578,23 +600,36 @@ FileOperationResult FileBrowserModel::performTransfer(const FileEntry& entry, co
     const auto sourceParent = source.parent_path().empty() ? fs::path(".") : source.parent_path();
     const internal::TransferDirectory sourceDirectory(sourceParent, entry.mountId);
     const internal::TransferDirectory destination(destinationDirectory, destinationMountId);
-    const auto connected = [&] { return sourceDirectory.connected() && destination.connected(); };
+    FileTransferResult result;
+    const auto connected = [&] {
+        if (!sourceDirectory.connected()) {
+            result.disconnectedSource = entry.mountId;
+        }
+        if (!destination.connected()) {
+            result.disconnectedDestination = destinationMountId;
+        }
+        return !result.disconnectedSource && !result.disconnectedDestination;
+    };
     if (!connected()) {
-        return disconnected();
+        result.operation = disconnected();
+        return result;
     }
     const auto pinnedSource = sourceDirectory.path() / source.filename();
     const auto transfer = move ? internal::movePathToDirectory(pinnedSource, destination.path(), connected, control)
                                : internal::copyPathToDirectory(pinnedSource, destination.path(), connected, control);
-    if (transfer.failure == internal::FilesystemTransferFailure::DriveDisconnected || (!transfer && !connected())) {
-        return disconnected();
+    if (!transfer && !connected()) {
+        result.operation = disconnected();
+        result.destinationState = transfer.failure == internal::FilesystemTransferFailure::SourceCleanupFailed
+                                      ? internal::TransferDestination::Published : transfer.destinationState;
+    } else if (transfer.failure == internal::FilesystemTransferFailure::SamePath) {
+        result.operation = errorResult(FileOperationStatus::InvalidSelection, "Already here");
+    } else if (!transfer) {
+        result.operation = transferError(move ? "Cut" : "Copy", transfer);
+    } else {
+        result.operation = {FileOperationStatus::Ok, std::string(move ? "Moved " : "Copied ") + entry.name};
+        result.destinationState = internal::TransferDestination::Published;
     }
-    if (transfer.failure == internal::FilesystemTransferFailure::SamePath) {
-        return errorResult(FileOperationStatus::InvalidSelection, "Already here");
-    }
-    if (!transfer) {
-        return transferError(move ? "Cut" : "Copy", transfer);
-    }
-    return {FileOperationStatus::Ok, std::string(move ? "Moved " : "Copied ") + entry.name};
+    return result;
 }
 
 FileOperationResult FileBrowserModel::renameSelectedTo(const std::string& name)

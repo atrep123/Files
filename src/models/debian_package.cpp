@@ -133,7 +133,9 @@ CommandResult readSnapshot(int fd, const std::vector<std::string>& command, bool
 
 std::string debDetails(const DebMetadata& metadata)
 {
-    return "Package: " + metadata.name + "\nVersion: " + metadata.version +
+    return "Package: " + metadata.name +
+           (metadata.hasInstallScripts ? "\nInstall scripts run as root" : "") +
+           "\nVersion: " + metadata.version +
            "   Arch: " + metadata.architecture +
            "\nDepends: " + (metadata.depends.empty() ? "None" : metadata.depends) +
            (metadata.preDepends.empty() ? "" : "\nPre-Depends: " + metadata.preDepends) +
@@ -174,7 +176,28 @@ DebMetadata parseDebInfo(const std::string& output)
     DebMetadata metadata;
     std::istringstream lines(output);
     std::string* continued = nullptr;
+    bool inFileList = true;
     for (std::string line; std::getline(lines, line);) {
+        if (inFileList && line.find_first_not_of(' ') != std::string::npos) {
+            // dpkg-deb -I lists control components before the package fields.
+            std::istringstream component(line);
+            size_t bytes = 0;
+            std::string unit;
+            if ((component >> bytes >> unit) && unit == "bytes,") {
+                size_t lineCount = 0;
+                std::string name;
+                if (component >> lineCount >> unit >> name && (unit == "line" || unit == "lines")) {
+                    if (name == "*") {
+                        component >> name;
+                    }
+                    metadata.hasInstallScripts |= name == "preinst" || name == "postinst" || name == "prerm" ||
+                                                  name == "postrm" || name == "config";
+                }
+            } else if (line.size() > 1 && line[0] == ' ' && line[1] != ' ' &&
+                       line.find(':') != std::string::npos && line.rfind(" size ", 0) != 0) {
+                inFileList = false;
+            }
+        }
         if (line.empty() || line.front() != ' ') {
             continued = nullptr;
             continue;
@@ -277,9 +300,8 @@ DebInspection inspectDeb(const fs::path& source, uint64_t mountId, const Command
         const auto error = package->planError;
         return {std::move(package), details + "\n\n" + error, false};
     }
-    details = "Installation can run package scripts as root.\n\n" + details +
-              "\n\nKeep local configuration (dpkg --force-confdef --force-confold)."
-              "\n\nAPT plan (simulation)\n" + cleanCommandText(plan);
+    details += "\n\nKeep local configuration (dpkg --force-confdef --force-confold)."
+               "\n\nAPT plan (simulation)\n" + cleanCommandText(plan);
     return {std::move(package), std::move(details), true};
 #else
     (void)source;

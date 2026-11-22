@@ -17,6 +17,13 @@ struct VolumeChanges {
     bool leftVolume = false;
 };
 
+struct FileTransferResult {
+    FileOperationResult operation;
+    internal::TransferDestination destinationState = internal::TransferDestination::NotPublished;
+    uint64_t disconnectedSource = 0;
+    uint64_t disconnectedDestination = 0;
+};
+
 class FileBrowserModel {
 public:
     explicit FileBrowserModel(std::string start_directory = {},
@@ -48,12 +55,14 @@ public:
     bool inPlaces() const { return _current_directory.get().empty(); }
     void showPlaces(const std::string& preferredPath = {});
     VolumeChanges updateVolumes(std::vector<internal::RemovableVolume> volumes);
+    bool hasRemovableVolumes() const { return !_volumes.empty(); }
+    FileOperationResult openRemovableVolumes();
     FileOperationResult openVolume(uint64_t mountId);
     const internal::RemovableVolume* volume(uint64_t mountId) const;
     FileOperationResult ejectSelected();
     static FileOperationResult ejectDrive(uint64_t mountId, const internal::CommandOutput& progress = {});
     uint64_t currentMountId() const { return _current_mount_id; }
-    static FileOperationResult performTransfer(const FileEntry& entry, const std::string& destinationDirectory,
+    static FileTransferResult performTransfer(const FileEntry& entry, const std::string& destinationDirectory,
                                                uint64_t destinationMountId, bool move,
                                                internal::TransferControl* control = nullptr);
     void refresh(bool preserveSelected = true);

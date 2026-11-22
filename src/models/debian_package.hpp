@@ -13,6 +13,7 @@ struct DebMetadata {
     std::string description;
     std::string preDepends;
     std::string depends;
+    bool hasInstallScripts = false;
 };
 
 struct PreparedDeb {
