@@ -211,7 +211,7 @@ public:
         _root = ui::box(parent, 0, 0, 320, 170, ui::black);
         auto* header = ui::caption(_root, 0, _title, uiFont14());
         _heading = lv_obj_get_child(header, 0);
-        _state = ui::label(header, 214, 2, 98, uiFont12());
+        _state = ui::label(header, 178, 2, 134, uiFont12());
         lv_obj_set_style_text_align(_state, LV_TEXT_ALIGN_RIGHT, 0);
         ui::hidden(_state, true);
 #if FILES_USE_SDL
@@ -263,10 +263,12 @@ public:
         }
         if (key == files_key::Left) {
             seekRelative(-static_cast<int32_t>(kSeekStepMs));
+            refreshKeys();
             return;
         }
         if (key == files_key::Right) {
             seekRelative(static_cast<int32_t>(kSeekStepMs));
+            refreshKeys();
         }
     }
 
@@ -351,9 +353,17 @@ private:
 #endif
         const bool paused = ready && _paused;
         ui::hidden(_state, !paused);
-        lv_label_set_text(_state, local("Ⅱ Paused", "Ⅱ Pauza"));
-        lv_obj_set_width(_heading, paused ? 200 : 304);
-        ui::line(_heading, _title, paused ? 200 : 304, uiFont14(), std::string::npos, true);
+        int titleWidth = 304;
+        if (paused) {
+            const auto seconds = _seek_offset_ms / 1000;
+            const auto secondPart = seconds % 60;
+            const auto status = std::string(local("Ⅱ Paused  ", "Ⅱ Pauza  ")) +
+                std::to_string(seconds / 60) + ":" + (secondPart < 10 ? "0" : "") + std::to_string(secondPart);
+            lv_label_set_text(_state, status.c_str());
+            titleWidth -= textWidth(status, uiFont12()) + 8;
+        }
+        lv_obj_set_width(_heading, titleWidth);
+        ui::line(_heading, _title, titleWidth, uiFont14(), std::string::npos, true);
         const auto hint = keyHints({ready ? (paused ? local("Space Play", "Mezera Hrát") :
                                                      local("Space Pause", "Mezera Pauza")) : "",
                                     ready ? local("Z← C→ Seek", "Z← C→ Posun") : "",

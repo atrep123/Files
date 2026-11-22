@@ -9,7 +9,7 @@ namespace {
 
 const char* keyLabel(const void* icon)
 {
-    if (icon == &image_icon_fullscreen) return local("Full", "Celý");
+    if (icon == &image_icon_fullscreen) return local("Full screen", "Celá obrazovka");
     if (icon == &image_icon_zoom_out) return "−";
     if (icon == &image_icon_zoom_in) return "+";
     if (icon == &image_icon_reset) return local("Rotate", "Otočit");
@@ -37,7 +37,7 @@ void BottomKeyBar::setItems(std::initializer_list<Item> items)
         if (!text.empty()) text += keyGap;
         text += static_cast<char>(item.key);
         text += ' ';
-        text += keyLabel(item.image);
+        text += item.label ? item.label : keyLabel(item.image);
     }
     const auto keys = keyHints({text, local("Esc Back", "Esc Zpět")}, {}, 252);
     ui::keyLegend(_label, keys);

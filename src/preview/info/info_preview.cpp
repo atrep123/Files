@@ -63,7 +63,7 @@ public:
         lv_obj_set_style_text_line_space(name, 17 - lv_font_get_line_height(uiFont14()), 0);
         lv_label_set_text(name, _file.name.c_str());
         lv_obj_update_layout(_body);
-        const int y = (lv_obj_get_height(name) + 16) / 17 * 17;
+        const int y = lv_obj_get_height(name);
         auto* fields = ui::label(_body, 8, y, 69, uiFont12(), ui::secondary);
         lv_label_set_text(fields, local("Kind\nSize\nModified\nHidden\nPath", "Typ\nVelikost\nZměněno\nSkrytý\nCesta"));
         auto* values = ui::label(_body, 80, y, 227, uiMonoFont12());
@@ -74,7 +74,7 @@ public:
         lv_label_set_text(values, details.c_str());
         lv_obj_set_style_text_line_space(fields, 17 - lv_font_get_line_height(uiFont12()), 0);
         lv_obj_set_style_text_line_space(values, 17 - lv_font_get_line_height(uiMonoFont12()), 0);
-        auto* path = ui::label(_body, 8, y + 85, 300, uiMonoFont12(), ui::secondary);
+        auto* path = ui::label(_body, 80, y + 68, 228, uiMonoFont12(), ui::secondary);
         lv_obj_set_style_text_line_space(path, 17 - lv_font_get_line_height(uiMonoFont12()), 0);
         std::string wrapped;
         std::string current;
@@ -83,7 +83,7 @@ public:
             const auto slash = _file.path.find('/', start);
             const auto end = slash == std::string::npos ? _file.path.size() : slash + 1;
             const auto component = _file.path.substr(start, end - start);
-            if (!current.empty() && textWidth(current + component, uiMonoFont12()) > 300) {
+            if (!current.empty() && textWidth(current + component, uiMonoFont12()) > 228) {
                 wrapped += current + "\n";
                 current.clear();
             }

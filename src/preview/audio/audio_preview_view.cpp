@@ -77,7 +77,8 @@ std::string timeText(float seconds)
 
 std::string remainingTimeText(float durationSec, float progressSec)
 {
-    return "-" + timeText(std::max(0.0f, durationSec - progressSec));
+    const auto time = timeText(durationSec - progressSec);
+    return time == "0:00" ? time : "-" + time;
 }
 
 const void* speedIcon(float speed)
@@ -207,8 +208,8 @@ private:
 
     float barValueForVisibleIndex(size_t visibleIndex) const
     {
-        if (_bars.empty()) {
-            return 0.0f;
+        if (_bars.empty() || _duration_sec <= 0.0f) {
+            return -1.0f;
         }
 
         const float duration     = std::max(_duration_sec, 0.001f);
@@ -218,7 +219,7 @@ private:
             center_index + static_cast<float>(visibleIndex) - static_cast<float>(kWaveformVisibleBarCount / 2);
         const int index = static_cast<int>(std::round(source_index));
         if (index < 0 || index >= static_cast<int>(_bars.size())) {
-            return 0.0f;
+            return -1.0f;
         }
         return _bars[static_cast<size_t>(index)];
     }
@@ -243,8 +244,10 @@ private:
             coords.x1 + (kWaveformWidth - ((kWaveformVisibleBarCount - 1) * kWaveformBarPitch + 1)) / 2;
 
         for (size_t i = 0; i < kWaveformVisibleBarCount; ++i) {
+            const auto value = barValueForVisibleIndex(i);
+            if (value < 0.0f) continue;
             int32_t bar_h = kWaveformMinBarHeight +
-                            static_cast<int32_t>(std::round(barValueForVisibleIndex(i) *
+                            static_cast<int32_t>(std::round(value *
                                                             (kWaveformMaxBarHeight - kWaveformMinBarHeight)));
             bar_h = std::clamp(bar_h, kWaveformMinBarHeight, kWaveformMaxBarHeight);
 
@@ -342,6 +345,8 @@ void AudioPreviewView::attach(lv_obj_t* parent)
     _title_label->setPos(8, kTitleY);
     _speed_label = ui::label(_root->raw_ptr(), 268, 2, 44, uiFont12(), ui::secondary);
     lv_obj_set_style_text_align(_speed_label, LV_TEXT_ALIGN_RIGHT, 0);
+    _state_label = ui::label(_root->raw_ptr(), 202, 2, 85, uiFont12(), ui::secondary);
+    lv_obj_set_style_text_align(_state_label, LV_TEXT_ALIGN_RIGHT, 0);
 
     _waveform = std::make_unique<WaveformView>(_root->raw_ptr());
 
@@ -375,9 +380,13 @@ void AudioPreviewView::attach(lv_obj_t* parent)
 #ifdef FILES_LAYOUT_AUDIT
     lv_obj_add_flag(_error_panel, layout_audit::overlay_flag);
 #endif
-    auto* title = ui::label(_error_panel, 8, 52, 304, uiFont14(), ui::error);
-    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(title, local("× Cannot play audio", "× Zvuk nelze přehrát"));
+    const auto* error = local("Cannot play audio", "Zvuk nelze přehrát");
+    const int textWidthPx = textWidth(error, uiFont14());
+    const int start = (320 - 14 - textWidthPx) / 2;
+    auto* icon = ui::label(_error_panel, start, 52, 12, LV_FONT_DEFAULT, ui::error);
+    lv_label_set_text(icon, LV_SYMBOL_CLOSE);
+    auto* title = ui::label(_error_panel, start + 14, 52, textWidthPx + 2, uiFont14(), ui::error);
+    lv_label_set_text(title, error);
     ui::hidden(_error_panel, true);
     _key_bar = std::make_unique<BottomKeyBar>(_root->raw_ptr());
 
@@ -406,7 +415,7 @@ void AudioPreviewView::detach()
     _playhead.reset();
     _waveform.reset();
     _title_label.reset();
-    _speed_label = _error_panel = nullptr;
+    _state_label = _speed_label = _error_panel = nullptr;
     _root.reset();
 }
 
@@ -427,6 +436,14 @@ void AudioPreviewView::renderState(AudioPlaybackState state)
     const bool failed = state == AudioPlaybackState::Error;
     ui::hidden(_error_panel, !failed);
     ui::hidden(_speed_label, failed);
+    const bool paused = state == AudioPlaybackState::Paused;
+    const bool ended = state == AudioPlaybackState::Stopped;
+    const auto* status = paused ? local("Paused", "Pauza") : ended ? local("Ended", "Konec") : "";
+    ui::hidden(_state_label, !*status);
+    lv_label_set_text(_state_label, status);
+    const int width = *status ? 271 - textWidth(status, uiFont12()) : kTitleWidth;
+    lv_obj_set_width(_title_label->raw_ptr(), width);
+    ui::line(_title_label->raw_ptr(), fileTitle(_view_model.file().get()), width, uiFont14(), std::string::npos, true);
     ui::hidden(_elapsed_label->raw_ptr(), failed);
     ui::hidden(_remaining_label->raw_ptr(), failed);
     updateKeyBar();
@@ -435,7 +452,7 @@ void AudioPreviewView::renderState(AudioPlaybackState state)
 void AudioPreviewView::renderFile(const AudioPreviewFile& file)
 {
     if (_title_label) {
-        ui::line(_title_label->raw_ptr(), fileTitle(file), kTitleWidth, uiFont14(), std::string::npos, true);
+        renderState(_view_model.state().get());
     }
     if (_waveform) {
         _waveform->load(file);
@@ -479,7 +496,8 @@ void AudioPreviewView::updateKeyBar()
     _key_bar->setItems({
         {'5', &image_icon_playback_replay},
         {'6', _view_model.state().get() == AudioPlaybackState::Playing ? &image_icon_playback_pause
-                                                                       : &image_icon_playback_play},
+                                                                       : &image_icon_playback_play,
+         _view_model.state().get() == AudioPlaybackState::Stopped ? local("Replay", "Znovu") : nullptr},
         {'7', &image_icon_playback_forward},
         {'8', speedIcon(_view_model.speed().get())},
     });

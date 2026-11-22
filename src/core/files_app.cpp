@@ -514,15 +514,17 @@ void FilesApp::showHelpPage()
 
     _help_page = createTextPreviewPage(local("Help", "Nápověda"), local(
         "F↑ X↓ Move · Enter Open\n"
-        "Tab Menu · U USB · E Eject\n"
-        "Esc Back · Hold Esc Exit\n"
+        "Tab Menu · E Eject\n"
+        "U Open USB / choose drive\n"
+        "Esc Back · Hold Esc · Exit\n"
         "PgUp/PgDn Page\n"
-        "Enter .deb · Review package",
+        "Enter on .deb · Review package",
         "F↑ X↓ Pohyb · Enter Otevřít\n"
-        "Tab Nabídka · U USB · E Vysunout\n"
-        "Esc Zpět · Držet Esc Ukončit\n"
-        "PgUp/PgDn Strany\n"
-        "Enter .deb · Náhled"));
+        "Tab Nabídka · E Vysunout\n"
+        "U Otevřít USB / vybrat disk\n"
+        "Esc Zpět · Podržet Esc · Ukončit\n"
+        "PgUp/PgDn Listovat\n"
+        "Enter na .deb · Náhled balíčku"));
     if (!_help_page) {
         spdlog::error("FilesApp: failed to create help page");
         return;
@@ -577,8 +579,9 @@ void FilesApp::updateVolumeNoticeVisibility()
                          (_help_active || _router.page() == PageId::Preview) && !hostRenderingSuspended();
     if (showUsb) {
         const auto* preview = _model.preview().page().get();
-        const auto* hint = !_help_active && preview && preview->usesWideFooter() ?
-            "U USB" : local("U Open USB", "U Otevřít USB");
+        const auto* hint = !_help_active && preview && preview->usesWideFooter() ? "U USB" :
+            _browser_vm.hasMultipleRemovableVolumes() ? local("U Choose USB", "U Vybrat USB") :
+                                                        local("U Open USB", "U Otevřít USB");
         const int width = textWidth(hint, uiFont12());
         lv_obj_set_x(_preview_usb_hint, 312 - width);
         lv_obj_set_width(_preview_usb_hint, width);
@@ -595,8 +598,12 @@ void FilesApp::updateVolumeNoticeVisibility()
     const bool browsing = _router.page() == PageId::Browser;
     if (visible) {
         auto text = notice.text;
-        if (!browsing && notice.connectedMountId) {
+        if (notice.connectedMountId) {
             if (const auto split = text.find('\n'); split != std::string::npos) text.resize(split);
+            if (browsing) {
+                text += _browser_vm.hasMultipleRemovableVolumes() ? local("\nU Choose drive", "\nU Vybrat disk") :
+                                                                   local("\nU Open", "\nU Otevřít");
+            }
         }
         const int height = text.find('\n') == std::string::npos ? 24 : 42;
         const int y = browsing ? _browser_view.toastY(height) : 150 - height;

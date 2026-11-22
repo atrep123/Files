@@ -61,7 +61,9 @@ std::string fitText(std::string text, int width, const lv_font_t* font, size_t l
         if (candidate > 1 && fits(build(1, candidate), width, limit, font)) right = candidate;
     }
     const int leftBudget = std::max(0, (width - textWidth(build(0, right), font)) * 2 / 3);
-    while (left + 1 < right && fits(build(left + 1, right), width, limit, font) &&
+    // Reserve suffix room in both pixels and characters, for example in a 36-character toast.
+    const auto leftLimit = limit == std::string::npos ? limit : std::max<size_t>(1, (limit - 1) * 2 / 3);
+    while (left < leftLimit && left + 1 < right && fits(build(left + 1, right), width, limit, font) &&
            (left == 0 || textWidth(text.substr(0, ends[left + 1]), font) <= leftBudget)) ++left;
     while (right > left + 1 && fits(build(left, right - 1), width, limit, font)) --right;
     while (left + 1 < right && fits(build(left + 1, right), width, limit, font)) ++left;
@@ -70,13 +72,19 @@ std::string fitText(std::string text, int width, const lv_font_t* font, size_t l
 
 std::string fitPath(std::string_view path, int width, const lv_font_t* font)
 {
-    if (textWidth(path, font) <= width) return std::string(path);
-    for (size_t slash = path.find('/'); slash != std::string_view::npos; slash = path.find('/', slash + 1)) {
+    const auto leaf = path.rfind('/');
+    const auto parent = leaf == std::string_view::npos || leaf == 0 ? std::string_view::npos :
+                        path.rfind('/', leaf - 1);
+    const auto measured = textWidth(path, font);
+    const bool deep = parent != std::string_view::npos && parent > 0 &&
+                      path.find('/', 1) < parent && measured > width * 3 / 4;
+    if (!deep && measured <= width) return std::string(path);
+    for (auto slash : {parent, leaf}) {
+        if (slash == std::string_view::npos) continue;
         const auto tail = "…" + std::string(path.substr(slash));
         if (textWidth(tail, font) <= width) return tail;
     }
-    const auto slash = path.rfind('/');
-    return fitText(std::string(slash == std::string_view::npos ? path : path.substr(slash + 1)), width, font);
+    return fitText(std::string(leaf == std::string_view::npos ? path : path.substr(leaf + 1)), width, font);
 }
 
 std::string browserRowText(const FileEntry& entry, int width)
@@ -112,7 +120,7 @@ std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, boo
     if (menu) return keyHints({movement, local("Enter Select", "Enter Vybrat"), back}, {ejectHint, usbHint});
     if (places) {
         if (eject) {
-            return keyHints({movement, inCzech() ? "Enter ↵" : open, ejectHint, actions}, {usbHint});
+            return keyHints({movement, open, ejectHint, actions}, {});
         }
         return keyHints({movement, selected ? open : "", actions}, {usbHint});
     }

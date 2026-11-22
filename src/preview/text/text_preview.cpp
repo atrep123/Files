@@ -124,7 +124,7 @@ bool readTextSample(const FileEntry& file, std::string& sample)
 #endif
 }
 
-std::optional<std::string> readTextContent(const FileEntry& file)
+std::optional<std::string> readTextContent(const FileEntry& file, int& error)
 {
 #if defined(__unix__) || defined(__APPLE__)
     // Open non-blocking and verify the node after opening as well.  The status
@@ -133,11 +133,14 @@ std::optional<std::string> readTextContent(const FileEntry& file)
     // preview creation.
     const int fd = ::open(file.path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) {
+        error = errno;
         return std::nullopt;
     }
 
     struct stat stat_buffer {};
-    if (::fstat(fd, &stat_buffer) != 0 || !S_ISREG(stat_buffer.st_mode)) {
+    const int status = ::fstat(fd, &stat_buffer);
+    if (status != 0 || !S_ISREG(stat_buffer.st_mode)) {
+        error = status != 0 ? errno : EINVAL;
         ::close(fd);
         return std::nullopt;
     }
@@ -156,6 +159,7 @@ std::optional<std::string> readTextContent(const FileEntry& file)
             continue;
         }
         if (bytes_read < 0) {
+            error = errno;
             ::close(fd);
             return std::nullopt;
         }
@@ -170,12 +174,17 @@ std::optional<std::string> readTextContent(const FileEntry& file)
 #else
     std::ifstream stream(file.path, std::ios::binary);
     if (!stream) {
+        error = errno ? errno : EIO;
         return std::nullopt;
     }
 
     const uint64_t limit = std::min(file.size, kMaxPreviewBytes);
     std::string content(static_cast<size_t>(limit), '\0');
     stream.read(content.data(), static_cast<std::streamsize>(content.size()));
+    if (stream.bad()) {
+        error = errno ? errno : EIO;
+        return std::nullopt;
+    }
     content.resize(static_cast<size_t>(stream.gcount()));
     if (file.size > kMaxPreviewBytes) {
         content += "\n\n...";
@@ -192,9 +201,22 @@ public:
 
     explicit TextPreviewPage(const FileEntry& file) : _title(file.name)
     {
-        auto content = readTextContent(file);
-        _read_failed = !content;
-        if (content) _content = std::move(*content);
+        int error = 0;
+        auto content = readTextContent(file, error);
+        if (content) {
+            _content = content->empty() ? local("Empty file", "Prázdný soubor") : std::move(*content);
+        } else {
+            _read_failed = true;
+            if (error == EACCES || error == EPERM) {
+                _read_reason = local("Permission to read this file was denied.", "Chybí oprávnění ke čtení.");
+            } else if (error == EIO) {
+                _read_reason = local("Input/output error.", "Chyba vstupu/výstupu.");
+            } else if (error == ENOENT) {
+                _read_reason = local("The file is no longer available.", "Soubor už není dostupný.");
+            } else {
+                _read_reason = local("The file could not be read.", "Soubor se nepodařilo přečíst.");
+            }
+        }
     }
 
     const std::string& title() const override
@@ -294,6 +316,7 @@ private:
     std::string _title;
     std::string _content;
     bool _read_failed = false;
+    std::string _read_reason;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _root;
     lv_obj_t* _keys = nullptr;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _panel;
@@ -327,6 +350,10 @@ private:
         _label->setLongMode(LV_LABEL_LONG_MODE_WRAP);
         _label->setSize(kScreenWidth - kTextPaddingX * 2 - 8, LV_SIZE_CONTENT);
         _label->setPos(0, 0);
+        if (_read_failed) {
+            auto* reason = ui::label(_panel->raw_ptr(), 0, kScrollStep + 3, 296, uiFont14());
+            lv_label_set_text(reason, _read_reason.c_str());
+        }
     }
 
     void createScrollbar()
@@ -367,7 +394,8 @@ private:
         _last_scroll_bottom = bottom;
 
         const int32_t range = top + bottom;
-        const auto hint = keyHints({range > 0 ? "F↑ X↓" : "", local("Esc Back", "Esc Zpět")}, {});
+        const auto* movement = top > 0 ? (bottom > 0 ? "F↑ X↓" : "F↑") : (bottom > 0 ? "X↓" : "");
+        const auto hint = keyHints({movement, local("Esc Back", "Esc Zpět")}, {});
         ui::keyLegend(_keys, hint);
         if (range <= 0) {
             _scrollbar_track->setOpa(LV_OPA_TRANSP);

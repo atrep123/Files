@@ -16,7 +16,7 @@ ssize_t read(int fd, void *buffer, size_t size)
         if (length >= 0) {
             target[length] = '\0';
             if (strcmp(target, fixture) == 0) {
-                errno = EIO;
+                errno = getenv("FILES_AUDIT_DENY_READ") ? EACCES : EIO;
                 return -1;
             }
         }

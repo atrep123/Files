@@ -57,6 +57,7 @@ public:
     void showPlaces(const std::string& preferredPath = {});
     VolumeChanges updateVolumes(std::vector<internal::RemovableVolume> volumes);
     bool hasRemovableVolumes() const { return !_volumes.empty(); }
+    bool hasMultipleRemovableVolumes() const { return _volumes.size() > 1; }
     FileOperationResult openRemovableVolumes();
     FileOperationResult openVolume(uint64_t mountId);
     const internal::RemovableVolume* volume(uint64_t mountId) const;

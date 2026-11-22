@@ -8,7 +8,7 @@ namespace files {
 
 class BottomKeyBar {
 public:
-    struct Item { uint32_t key; const void* image; };
+    struct Item { uint32_t key; const void* image; const char* label = nullptr; };
     explicit BottomKeyBar(lv_obj_t* parent);
     ~BottomKeyBar();
     void setItems(std::initializer_list<Item> items);

@@ -415,7 +415,7 @@ bool AudioPreviewModel::load(const FileEntry& file)
 
     const auto duration = static_cast<uint32_t>(std::ceil(std::max(0.0f, _impl->durationSec())));
     _file.set(AudioPreviewFile{file, duration});
-    _state.set(AudioPlaybackState::Paused);
+    _state.set(AudioPlaybackState::Ready);
     _progress_sec.set(_impl->progressSec());
     return true;
 }

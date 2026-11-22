@@ -35,15 +35,14 @@ struct RowData {
     std::string name;
     std::string metadata;
     const lv_image_dsc_t* icon = nullptr;
-    const char* symbol = nullptr;
     bool directory = false;
     bool checked = false;
 };
 
-RowData actionRow(BrowserAction action)
+RowData actionRow(BrowserAction action, const FileEntry* target)
 {
     switch (action) {
-        case BrowserAction::Open: return {local("Open", "Otevřít"), {}, &image_icon_folder};
+        case BrowserAction::Open: return {local("Open", "Otevřít"), {}, target && !target->directory ? &image_icon_open_file : &image_icon_folder};
         case BrowserAction::Copy: return {local("Copy", "Kopírovat"), {}, &image_icon_copy};
         case BrowserAction::Cut: return {local("Cut", "Vyjmout"), {}, &image_icon_cut};
         case BrowserAction::Paste: return {local("Paste", "Vložit"), {}, &image_icon_paste};
@@ -51,12 +50,12 @@ RowData actionRow(BrowserAction action)
         case BrowserAction::Info: return {local("Details", "Podrobnosti"), {}, &image_icon_info};
         case BrowserAction::Delete: return {local("Delete", "Smazat"), {}, &image_icon_delete};
         case BrowserAction::Places: return {local("Places", "Umístění"), {}, &image_icon_folder};
-        case BrowserAction::Eject: return {local("E  Eject", "E  Vysunout"), {}, nullptr, LV_SYMBOL_EJECT};
-        case BrowserAction::NewFolder: return {local("New folder", "Nová složka"), {}, nullptr, LV_SYMBOL_PLUS};
-        case BrowserAction::Language: return {local("Language", "Jazyk"), {}, nullptr, LV_SYMBOL_SETTINGS};
-        case BrowserAction::SystemLanguage: return {local("System language", "Systémový jazyk"), {}, nullptr, LV_SYMBOL_SETTINGS, false, languagePreference() == Language::System};
-        case BrowserAction::English: return {"English", {}, nullptr, nullptr, false, languagePreference() == Language::English};
-        case BrowserAction::Czech: return {"Čeština", {}, nullptr, nullptr, false, languagePreference() == Language::Czech};
+        case BrowserAction::Eject: return {local("E  Eject", "E  Vysunout"), {}, &image_icon_eject};
+        case BrowserAction::NewFolder: return {local("New folder", "Nová složka"), {}, &image_icon_new_folder};
+        case BrowserAction::Language: return {local("Language", "Jazyk"), {}, &image_icon_language};
+        case BrowserAction::SystemLanguage: return {local("System language", "Systémový jazyk"), {}, &image_icon_language, false, languagePreference() == Language::System};
+        case BrowserAction::English: return {"English", {}, nullptr, false, languagePreference() == Language::English};
+        case BrowserAction::Czech: return {"Čeština", {}, nullptr, false, languagePreference() == Language::Czech};
     }
     return {};
 }
@@ -98,17 +97,16 @@ public:
     Rows(lv_obj_t* parent, uint32_t background)
         : _background(background), _panel(ui::box(parent, 0, 20, 320, 130, background)),
           _thumb(ui::box(_panel, 315, 0, 3, 12, ui::secondary)),
-          _empty(ui::label(_panel, 8, 54, 304, uiFont14()))
+          _empty(ui::label(_panel, 8, 54, 304, uiFont14())),
+          _pasteHint(ui::label(_panel, 8, 74, 304, uiFont12(), ui::secondary))
     {
         lv_obj_set_style_text_align(_empty, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_align(_pasteHint, LV_TEXT_ALIGN_CENTER, 0);
+        ui::hidden(_pasteHint, true);
         for (int i = 0; i < visibleRows; ++i) {
             auto& row = _rows[i];
             row.panel = ui::box(_panel, 0, i * rowHeight, rowWidth, rowHeight, background);
             row.icon = lv_image_create(row.panel);
-            lv_obj_set_style_transform_pivot_x(row.icon, 0, 0);
-            lv_obj_set_style_transform_pivot_y(row.icon, 0, 0);
-            row.symbol = ui::label(row.panel, 8, 4, 16, LV_FONT_DEFAULT, ui::accent);
-
             row.name = ui::label(row.panel, 32, 4, 276, uiFont14());
             const int baseline = lv_font_get_line_height(uiFont14()) - uiFont14()->base_line;
             const int metadataY = 4 + baseline - (lv_font_get_line_height(uiFont12()) - uiFont12()->base_line);
@@ -140,6 +138,13 @@ public:
     }
 
     void show(bool visible) { ui::hidden(_panel, !visible); }
+    void showPasteHint(bool visible)
+    {
+        ui::hidden(_pasteHint, !visible);
+        _hasPasteHint = visible;
+        alignEmpty(130 - _reservedHeight);
+        if (visible) ui::line(_pasteHint, local("Paste via Tab", "Vložit přes Tab"), 304, uiFont12());
+    }
     int selectedY() const
     {
         return _selected < 0 ? -1 : 20 + (_selected - (_unobstructedFirst.value_or(_first))) * rowHeight;
@@ -159,7 +164,7 @@ public:
         _capacity = panelHeight / rowHeight;
         lv_obj_set_y(_panel, 20 + (y == 20 ? height : 0));
         lv_obj_set_height(_panel, panelHeight);
-        lv_obj_set_y(_empty, (panelHeight - lv_font_get_line_height(uiFont14())) / 2);
+        alignEmpty(panelHeight);
         select(_selected, true);
     }
 
@@ -195,7 +200,7 @@ public:
                     const auto name = _places && !entry.mountRoot ? localizedMessage(entry.name) : entry.name;
                     const auto metadata = entry.mountRoot ? (entry.freeBytes ? sizeInUnits(*entry.freeBytes) : "–") :
                                           entry.directory ? "" : sizeInUnits(entry.size);
-                    bind(row, {name, metadata, entryIcon(entry), entry.mountRoot ? LV_SYMBOL_USB : nullptr,
+                    bind(row, {name, metadata, entry.mountRoot ? &image_icon_usb : entryIcon(entry),
                                entry.directory});
                 } else {
                     bind(row, _actions[index]);
@@ -207,7 +212,6 @@ public:
             lv_obj_set_style_text_color(row.name, lv_color_hex(foreground), 0);
             lv_obj_set_style_text_color(row.check, lv_color_hex(foreground), 0);
             lv_obj_set_style_text_color(row.metadata, lv_color_hex(active ? ui::black : ui::secondary), 0);
-            lv_obj_set_style_text_color(row.symbol, lv_color_hex(active ? ui::black : ui::accent), 0);
             lv_obj_set_style_image_recolor(row.icon, lv_color_hex(ui::black), 0);
             lv_obj_set_style_image_recolor_opa(row.icon, active ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
 #ifdef FILES_LAYOUT_AUDIT
@@ -223,38 +227,35 @@ private:
         lv_obj_t* name;
         lv_obj_t* metadata;
         lv_obj_t* icon;
-        lv_obj_t* symbol;
         lv_obj_t* check;
     };
 
+    void alignEmpty(int panelHeight)
+    {
+        lv_obj_set_y(_empty, panelHeight / 2 - (_hasPasteHint ? 18 : 9));
+        lv_obj_set_y(_pasteHint, panelHeight / 2 + 2);
+    }
+
     void bind(const Row& row, const RowData& data)
     {
-        const int used = data.metadata.empty() ? (data.checked ? 24 : 0) :
-            8 + (data.directory ? metadataWidth : std::min(metadataWidth, textWidth(data.metadata, uiFont12())));
+        const int used = data.metadata.empty() ? (data.checked ? 24 : 0) : 8 + metadataWidth;
         const int width = 276 - used;
         ui::hidden(row.check, !data.checked);
         lv_obj_set_width(row.name, width);
         ui::line(row.name, data.name, width, uiFont14(), std::string::npos, !data.directory);
-        const int column = data.metadata.empty() || data.directory ? metadataWidth : used - 8;
-        lv_obj_set_width(row.metadata, column);
-        lv_obj_set_x(row.metadata, 308 - column);
-        ui::line(row.metadata, data.metadata, column, uiFont12());
+        ui::line(row.metadata, data.metadata, metadataWidth, uiFont12());
         ui::hidden(row.metadata, data.metadata.empty());
-        ui::hidden(row.icon, data.symbol || !data.icon);
-        ui::hidden(row.symbol, !data.symbol);
-        if (data.symbol) {
-            const auto* font = std::string_view(data.symbol) == LV_SYMBOL_USB ? &lv_font_montserrat_12 : LV_FONT_DEFAULT;
-            lv_obj_set_style_text_font(row.symbol, font, 0);
-            lv_obj_set_y(row.symbol, (rowHeight - lv_font_get_line_height(font)) / 2);
-            lv_label_set_text(row.symbol, data.symbol);
-        } else if (data.icon) {
+        ui::hidden(row.icon, !data.icon);
+        if (data.icon) {
             lv_image_set_src(row.icon, data.icon);
             const int w = data.icon->header.w;
             const int h = data.icon->header.h;
             const int scale = 16 * LV_SCALE_NONE / std::max(w, h);
             lv_image_set_scale(row.icon, scale);
-            lv_obj_set_pos(row.icon, 8 + (16 - w * scale / LV_SCALE_NONE) / 2,
-                            (rowHeight - h * scale / LV_SCALE_NONE) / 2);
+            // LVGL centers scaled images over the source object's intrinsic area.
+            lv_obj_set_pos(row.icon, 8 + (16 - w) / 2, (rowHeight - h) / 2 + (data.icon == &image_icon_paste ? 1 : 0));
+            lv_obj_set_style_transform_pivot_x(row.icon, w / 2, 0);
+            lv_obj_set_style_transform_pivot_y(row.icon, h / 2, 0);
         }
     }
 
@@ -262,10 +263,12 @@ private:
     lv_obj_t* _panel;
     lv_obj_t* _thumb;
     lv_obj_t* _empty;
+    lv_obj_t* _pasteHint;
     std::array<Row, visibleRows> _rows{};
     const std::vector<FileEntry>* _files = nullptr;
     std::vector<RowData> _actions;
     bool _places = false;
+    bool _hasPasteHint = false;
     int _first = 0;
     int _selected = -1;
     int _capacity = visibleRows;
@@ -293,14 +296,18 @@ public:
           _passwordCursor(ui::box(_box, 8, 70, 2, 13, ui::white)),
           _masked(ui::label(_box, 8, 67, 288, uiFont14())),
           _progressTrack(ui::box(_box, 8, 72, 288, 6, ui::bar)),
-          _progressFill(ui::box(_progressTrack, 0, 0, 0, 6, ui::accent)),
+          _progressFill(ui::box(_progressTrack, 0, 0, 0, 4, ui::accent)),
           _hint(ui::label(_box, 8, 130, 288, uiFont12())),
+          _scrollUp(ui::label(_box, 8, 130, 18, uiFont12())),
+          _scrollDown(ui::label(_box, 26, 130, 18, uiFont12())),
           _input(lv_textarea_create(_box))
     {
 #ifdef FILES_LAYOUT_AUDIT
         lv_obj_add_flag(_box, layout_audit::overlay_flag);
         lv_obj_add_flag(_body, layout_audit::viewport_flag);
 #endif
+        lv_obj_set_style_border_width(_progressTrack, 1, 0);
+        lv_obj_set_style_border_color(_progressTrack, lv_color_hex(ui::secondary), 0);
         lv_obj_add_flag(_body, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scroll_dir(_body, LV_DIR_VER);
         lv_obj_set_scrollbar_mode(_body, LV_SCROLLBAR_MODE_OFF);
@@ -311,6 +318,8 @@ public:
         lv_obj_set_style_text_line_space(_text, 19 - lv_font_get_line_height(uiFont14()), 0);
         lv_obj_set_style_text_line_space(_diagnostics, 19 - lv_font_get_line_height(uiMonoFont12()), 0);
         lv_obj_set_style_text_align(_hint, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_text(_scrollUp, "F↑");
+        lv_label_set_text(_scrollDown, "X↓");
         lv_obj_remove_style_all(_input);
         lv_obj_set_size(_input, 288, 24);
         lv_obj_set_pos(_input, 8, 54);
@@ -320,8 +329,9 @@ public:
         lv_obj_set_style_border_color(_input, lv_color_hex(ui::accent), 0);
         lv_obj_set_style_pad_hor(_input, 6, 0);
         lv_obj_set_style_pad_top(_input, 2, 0);
-        lv_obj_set_style_pad_top(_input, 1, LV_PART_CURSOR);
-        lv_obj_set_style_pad_bottom(_input, 1, LV_PART_CURSOR);
+        lv_obj_set_style_pad_top(_input, -2, LV_PART_CURSOR);
+        lv_obj_set_style_pad_bottom(_input, -3, LV_PART_CURSOR);
+        lv_obj_set_style_pad_left(_input, -3, LV_PART_CURSOR);
         lv_obj_set_style_text_color(_input, lv_color_hex(ui::secondary), LV_PART_TEXTAREA_PLACEHOLDER);
         lv_obj_set_style_text_font(_input, uiFont12(), LV_PART_TEXTAREA_PLACEHOLDER);
         lv_obj_set_style_text_font(_input, uiFont14(), 0);
@@ -329,6 +339,13 @@ public:
         lv_obj_set_style_border_side(_input, LV_BORDER_SIDE_LEFT, LV_PART_CURSOR);
         lv_obj_set_style_border_width(_input, 2, LV_PART_CURSOR);
         lv_obj_set_style_border_color(_input, lv_color_hex(ui::accent), LV_PART_CURSOR);
+        lv_obj_set_style_text_color(_input, lv_color_hex(ui::white), LV_PART_CURSOR);
+        lv_obj_set_scrollbar_mode(_input, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_add_event_cb(_input, [](lv_event_t* event) {
+            if (auto* animation = static_cast<lv_anim_t*>(lv_event_get_param(event))) {
+                lv_anim_set_duration(animation, 1);
+            }
+        }, LV_EVENT_SCROLL_BEGIN, nullptr);
         lv_textarea_set_one_line(_input, true);
         lv_textarea_set_max_length(_input, 255);
         lv_obj_add_event_cb(_input, [](lv_event_t* event) {
@@ -361,7 +378,7 @@ public:
                       deletion.file.directory ? local("Delete folder?", "Smazat složku?") :
                                                 local("Delete file?", "Smazat soubor?"),
                       deletion.file.name + (deletion.file.directory ?
-                          local("\nThe folder and its contents will be deleted.", "\nSložka bude smazána včetně obsahu.") : ""),
+                          local("\nAll contents will also be deleted.", "\nSložka bude smazána včetně obsahu.") : ""),
                       false, DialogTone::Warning};
         } else if (rename.active) {
             dialog = {PackageDialogMode::Result,
@@ -399,16 +416,22 @@ public:
         ui::hidden(_passwordCursor, !password || !dialog.maskedPassword.empty());
         ui::hidden(_masked, !password || dialog.maskedPassword.empty());
         ui::line(_masked, dialog.maskedPassword, 288, uiFont14());
-        ui::hidden(_progressTrack, !dialog.progress && !installing);
+        const bool transferring = _mode == PackageDialogMode::Transferring;
+        _indeterminate = installing || (transferring && !dialog.progress);
+        ui::hidden(_progressTrack, !transferring && !installing);
         lv_obj_set_y(_progressTrack, installing ? 80 : 72);
         if (dialog.progress) {
             lv_obj_set_x(_progressFill, 0);
-            lv_obj_set_width(_progressFill, 288 * *dialog.progress / 100);
+            lv_obj_set_width(_progressFill, 286 * *dialog.progress / 100);
             ui::hidden(_progressFill, *dialog.progress == 0);
-        } else if (installing) {
+        } else if (_indeterminate) {
             lv_obj_set_width(_progressFill, 52);
             ui::hidden(_progressFill, false);
         }
+#ifdef FILES_LAYOUT_AUDIT
+        if (password) lv_obj_add_flag(_passwordLine, layout_audit::selected_flag);
+        else lv_obj_remove_flag(_passwordLine, layout_audit::selected_flag);
+#endif
         if (rename.active) {
             lv_textarea_set_placeholder_text(_input, rename.creating ? local("Folder name", "Název složky") : "");
         }
@@ -419,6 +442,7 @@ public:
         const int height = std::max(lineHeight, ((130 - top) / lineHeight) * lineHeight);
         lv_obj_set_height(_body, installing ? lineHeight : height);
         auto body = dialog.text;
+        if (const auto first = body.find_first_not_of("\n"); first != std::string::npos) body.erase(0, first);
         if (installing) {
             while (!body.empty() && body.back() == '\n') body.pop_back();
             if (const auto last = body.rfind('\n'); last != std::string::npos) body.erase(0, last + 1);
@@ -435,6 +459,8 @@ public:
                 else body.resize(end - 1);
             }
         }
+        while (!body.empty() && body.back() == '\n') body.pop_back();
+        while (!diagnostics.empty() && diagnostics.back() == '\n') diagnostics.pop_back();
         lv_label_set_text(_text, body.c_str());
         lv_label_set_text(_diagnostics, diagnostics.c_str());
         ui::hidden(_diagnostics, diagnostics.empty());
@@ -478,12 +504,19 @@ public:
                 default: break;
             }
         }
+        _resultScroll = canScroll && _mode == PackageDialogMode::Result;
+        lv_obj_set_x(_hint, 8);
+        lv_obj_set_width(_hint, 288);
+        lv_obj_set_style_text_align(_hint, LV_TEXT_ALIGN_CENTER, 0);
+        ui::hidden(_scrollUp, true);
+        ui::hidden(_scrollDown, true);
         _editAction = rename.creating ? local("Enter Create", "Enter Vytvořit") : local("Enter Save", "Enter Uložit");
         if (rename.active) {
             _editError.clear();
             refreshEditHint();
         } else {
-            ui::keyLegend(_hint, hint);
+            if (_resultScroll) updateResultHint();
+            else ui::keyLegend(_hint, hint);
         }
     }
 
@@ -513,18 +546,44 @@ public:
     {
         if (_mode == PackageDialogMode::Review || (_mode == PackageDialogMode::Result && !_editing)) {
             lv_obj_scroll_by_bounded(_body, 0, -offset, LV_ANIM_OFF);
+            if (_resultScroll) updateResultHint();
         }
     }
 
     void tick(uint32_t nowMs)
     {
-        if (_mode == PackageDialogMode::Installing) {
-            const int phase = (nowMs / 16) % 472;
-            lv_obj_set_x(_progressFill, phase <= 236 ? phase : 472 - phase);
+        if (_indeterminate && (_mode == PackageDialogMode::Installing || _mode == PackageDialogMode::Transferring)) {
+            constexpr int travel = 286 - 52;
+            const int phase = (nowMs / 5) % (2 * travel);
+            lv_obj_set_x(_progressFill, phase <= travel ? phase : 2 * travel - phase);
         }
     }
 
 private:
+    void updateResultHint()
+    {
+        // Reserve both slots as the scroll position changes.
+        const auto up = lv_obj_get_scroll_top(_body) > 0;
+        const auto down = lv_obj_get_scroll_bottom(_body) > 0;
+        const auto* back = local("Esc Back", "Esc Zpět");
+        const auto* font = uiFont12();
+        const int upWidth = textWidth("F↑", font) + 1;
+        const int downWidth = textWidth("X↓", font) + 1;
+        const int backWidth = textWidth(back, font) + 2;
+        constexpr int gap = 8;
+        const int x = (304 - upWidth - downWidth - backWidth - 2 * gap) / 2;
+        lv_obj_set_x(_scrollUp, x);
+        lv_obj_set_width(_scrollUp, upWidth);
+        lv_obj_set_x(_scrollDown, x + upWidth + gap);
+        lv_obj_set_width(_scrollDown, downWidth);
+        lv_obj_set_x(_hint, x + upWidth + downWidth + 2 * gap);
+        lv_obj_set_width(_hint, backWidth);
+        lv_obj_set_style_text_align(_hint, LV_TEXT_ALIGN_LEFT, 0);
+        ui::hidden(_scrollUp, !up);
+        ui::hidden(_scrollDown, !down);
+        ui::keyLegend(_hint, back);
+    }
+
     void updateThumb()
     {
         const int top = lv_obj_get_scroll_top(_body);
@@ -577,11 +636,15 @@ private:
     lv_obj_t* _progressTrack;
     lv_obj_t* _progressFill;
     lv_obj_t* _hint;
+    lv_obj_t* _scrollUp;
+    lv_obj_t* _scrollDown;
     lv_obj_t* _input;
     PackageDialogMode _mode = PackageDialogMode::Closed;
     std::string _last_title;
     std::string _editAction;
     std::string _editError;
+    bool _indeterminate = false;
+    bool _resultScroll = false;
     bool _setting = false;
     bool _editing = false;
 };
@@ -719,17 +782,19 @@ void BrowserView::updateChrome()
     _usb_action = _vm.volumeActionShown();
     const auto context = menu ? _vm.menuContext() : "";
     const auto path = !menu && !places ? _vm.directoryCaption() : "";
-    const int width = path.empty() ? (menu || !places ? 304 : 204) :
-        std::clamp(textWidth(title, uiFont14()), 34, 158);
+    const bool hasContext = !path.empty() || !context.empty();
+    const int width = hasContext ? std::min(textWidth(title, uiFont14()), 158) : places ? 204 : 304;
     lv_obj_set_width(_heading, width);
-    const auto menuTitle = context.empty() ? title :
-        title + " · " + fitText(context, width - textWidth(title + " · ", uiFont14()), uiFont14(),
-                                std::string::npos, !places && !_vm.canEject());
-    ui::line(_heading, menuTitle, width, uiFont14());
-    lv_obj_set_x(_path, 16 + width);
-    lv_obj_set_width(_path, 296 - width);
-    lv_label_set_text(_path, fitPath(path, 296 - width, uiFont12()).c_str());
-    ui::hidden(_path, path.empty());
+    ui::line(_heading, title, width, uiFont14());
+    if (hasContext) {
+        lv_obj_set_x(_path, 16 + width);
+        lv_obj_set_width(_path, 296 - width);
+        const auto caption = context.empty() ? fitPath(path, 296 - width, uiFont12()) :
+            fitText(context, 296 - width, uiFont12(), std::string::npos, true);
+        lv_label_set_text(_path, caption.c_str());
+    }
+    ui::hidden(_path, !hasContext);
+    _files->showPasteHint(!places && _vm.hasClipboard() && _vm.entries().get().empty());
     ui::hidden(_free, !places || menu || !_usb);
     lv_label_set_text(_free, local("Free", "Volno"));
     const bool movement = menu ? _vm.actionCount() > 1 : _vm.entries().get().size() > 1;
@@ -748,9 +813,9 @@ void BrowserView::updateMenu(bool open)
     if (open) {
         std::vector<RowData> rows;
         for (const auto action : _vm.availableActions()) {
-            auto row = actionRow(action);
+            auto row = actionRow(action, _vm.selectedEntry());
             if (action == BrowserAction::Eject && _vm.canEject() && !_vm.inPlaces()) {
-                row.name += " " + _vm.menuContext();
+                row.name += " " + _vm.directoryTitle();
             }
             rows.push_back(std::move(row));
         }
@@ -792,12 +857,17 @@ void BrowserView::updateStatus(const std::string& status)
                          status.rfind("Renamed ", 0) == 0 || status.rfind("Deleted ", 0) == 0 ||
                          status.rfind("Created ", 0) == 0;
     auto display = message;
-    if (status.rfind("Deleted ", 0) == 0) {
+    if (status.rfind("Copied ", 0) == 0) {
+        display = local("Copied: ", "Zkopírováno: ") + status.substr(7);
+    } else if (status.rfind("Created copy ", 0) == 0) {
+        display = local("Created copy: ", "Vytvořena kopie: ") + status.substr(13);
+    } else if (status.rfind("Deleted ", 0) == 0) {
         display = local("Deleted “", "Smazáno „") + status.substr(8) + local("”", "“");
     } else if (status.rfind("Created ", 0) == 0 && status.rfind("Created copy ", 0) != 0) {
         display = inCzech() ? "Složka „" + status.substr(8) + "“ vytvořena" : "Created folder “" + status.substr(8) + "”";
     }
     ui::toast(_toast, display, 126, success ? ui::success : ui::white);
+    updateChrome();
     _toast_started = lv_tick_get();
     _toast_duration = message.find('\n') == std::string::npos ? 3000 : 5000;
     placeToast();

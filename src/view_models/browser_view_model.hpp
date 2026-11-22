@@ -84,6 +84,8 @@ public:
     std::string directoryTitle();
     std::string directoryCaption();
     std::string menuContext() const;
+    bool hasClipboard() const { return _pending_copy.active; }
+    bool hasMultipleRemovableVolumes() const { return _model.browser().hasMultipleRemovableVolumes(); }
     bool volumeActionShown() const { return _volume_notice.get().connectedMountId != 0; }
     void clearStatus() { status().set(""); }
     std::vector<BrowserAction> availableActions() const;
@@ -148,6 +150,7 @@ public:
     bool packageDialogOpen() const { return _package_dialog.get().mode != PackageDialogMode::Closed; }
     bool packagePasswordActive() const { return _package_dialog.get().mode == PackageDialogMode::Password; }
     auto& packageScroll() { return _package_scroll; }
+    std::string passwordAttempt() const;
     void editPackagePassword(uint32_t key, const char* utf8);
     const FileEntry* selectedEntry() const;
     bool canGoBack() const

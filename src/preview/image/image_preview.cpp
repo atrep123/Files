@@ -181,7 +181,7 @@ public:
         }
 
         _error_label = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Label>(_viewport->raw_ptr());
-        _error_label->setText(local("No preview", "Náhled není dostupný"));
+        _error_label->setText(local("Preview unavailable", "Náhled není dostupný"));
         _error_label->setTextFont(uiFont14());
         _error_label->setTextColor(lv_color_hex(ui::error));
         _error_label->setTextAlign(LV_TEXT_ALIGN_CENTER);
@@ -350,7 +350,7 @@ private:
         auto* title = lv_obj_get_child(_title_bar, 0);
         lv_obj_set_width(title, zoomed ? 235 : 304);
         ui::line(title, _title, zoomed ? 235 : 304, uiFont14(), std::string::npos, true);
-        lv_label_set_text_fmt(_zoom_label, "%u%%", (_scale * 100 + _fit_scale / 2) / _fit_scale);
+        lv_label_set_text_fmt(_zoom_label, local("%u%%", "%u %%"), (_scale * 100 + _fit_scale / 2) / _fit_scale);
         ui::hidden(_zoom_label, !zoomed);
     }
 

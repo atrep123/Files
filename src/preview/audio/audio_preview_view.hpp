@@ -28,6 +28,7 @@ private:
     AudioPreviewViewModel& _view_model;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _root;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _title_label;
+    lv_obj_t* _state_label = nullptr;
     lv_obj_t* _speed_label = nullptr;
     lv_obj_t* _error_panel = nullptr;
     std::unique_ptr<WaveformView> _waveform;

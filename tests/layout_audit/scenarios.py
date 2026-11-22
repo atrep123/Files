@@ -1,7 +1,9 @@
 """Exercise real keyboard navigation and collect the SDL RGB565/layout pairs."""
 import ctypes as c
+import fcntl
 import json
 import math
+import re
 import struct
 import wave
 import os
@@ -84,13 +86,23 @@ def capture(name, delay=.11, expected=None, *, keep=True):
     else:
         for suffix in (".json", ".png", ".pozadi.png"):
             (output / (stem + suffix)).unlink()
+    return document
+
+
+def assert_selected(document, expected):
+    visible = [obj for obj in document["objects"] if not obj["hidden"]]
+    selected = {obj["id"] for obj in visible if obj["selected"]}
+    assert any(obj["parent"] in selected and expected in (obj["text"] or "") for obj in visible), expected
+
 
 def disk(name):
     img = base/(name + ".img")
     with img.open("wb") as stream:
         stream.truncate(48 * 1024 * 1024)
     run("mkfs.ext4", "-qF", img)
-    dev = run("losetup", "--find", "--show", img)
+    with open("/tmp/files-layout-audit-loop.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        dev = run("losetup", "--find", "--show", img)
     with (base/"loop-devices").open("a") as log:
         print(dev, file=log)
     path = Path("/media")/name
@@ -108,7 +120,7 @@ def attach(d):
 def detach(path, lazy=False):
     run("umount", *(["--lazy"] if lazy else []), path)
 
-def deb(target, scripts, architecture="all"):
+def deb(target, scripts, architecture="all", depends=""):
     tree = base/("pkg-" + target.stem)
     (tree/"DEBIAN").mkdir(parents=True)
     docs = tree/"usr/share/doc/ux2-files-test"
@@ -116,7 +128,8 @@ def deb(target, scripts, architecture="all"):
     (docs/"probe.txt").write_text("SDL UI fixture\n")
     (tree/"DEBIAN/control").write_text(
         f"Package: ux2-files-test\nVersion: 1.0.0\nArchitecture: {architecture}\n"
-        "Maintainer: Files Test <files-test@example.invalid>\n"
+        "Maintainer: Files Test <files-test@example.invalid>\n" +
+        (f"Depends: {depends}\n" if depends else "") +
         "Description: Příručka pro Files / Files manual\n" +
         "".join(f" Section {i} describes copying files and safely ejecting a USB drive.\n" for i in range(12)))
     if scripts:
@@ -135,9 +148,9 @@ def launch(name, root, user=None, **extra):
             readable.chmod(0o644)
             auth = str(readable)
         app = subprocess.Popen([executable], stdout=log, stderr=log,
-            user=user, env=dict(os.environ, FILES_START_DIR=str(root), SDL_VIDEODRIVER="x11",
-                     LC_ALL="C.UTF-8", XDG_CONFIG_HOME=str(config), SDL_AUDIODRIVER="dummy", XAUTHORITY=auth,
-                     FILES_LAYOUT_AUDIT_DIR=str(output), **extra))
+            user=user, env={**os.environ, "FILES_START_DIR": str(root), "SDL_VIDEODRIVER": "x11",
+                 "LC_ALL": "C.UTF-8", "XDG_CONFIG_HOME": str(config), "SDL_AUDIODRIVER": "dummy",
+                 "XAUTHORITY": auth, "FILES_LAYOUT_AUDIT_DIR": str(output), **extra})
     time.sleep(.45)
     assert app.poll() is None, f"{name}: SDL exited with {app.returncode}"
     return app
@@ -234,11 +247,21 @@ def exercise_browser():
         key("End")
         key("Page_Down")
         capture("many-items-paged", expected="13")
+        for _ in range(11):
+            key("Page_Down")
+        end = capture("many-items-end", expected=("v54.pdf", "904 B"))
+        assert_selected(end, "v54.pdf")
+        action(5)
+        key("Escape")
+        assert_selected(capture("delete-cancelled-scrolled", expected="v54.pdf"), "v54.pdf")
         key("Escape")
         key("x")
         capture("czech-filename", expected="Příliš žluť")
         key("Tab")
         capture("file-menu", expected=say("Details", "Podrobnosti"))
+        key("f")
+        assert_selected(capture("file-menu-end", expected=say("Language", "Jazyk")), say("Language", "Jazyk"))
+        key("x")
         key("x")
         key("Return")
         capture("file-details", expected=czech)
@@ -283,6 +306,31 @@ def exercise_browser():
     finally:
         stop(app)
 
+    system_config = config/"cardputer-files/language"
+    app = launch("system-language", sample, LC_ALL="", LC_MESSAGES=say("en_US.UTF-8", "cs_CZ.UTF-8"))
+    try:
+        action(1, from_end=True)
+        key("f" if language == "en" else "x")
+        key("Return")
+        assert system_config.read_text().strip() == "system"
+        action(1, from_end=True)
+        key("x")
+        assert_selected(capture("language-system-saved", expected=say("System language", "Systémový jazyk")), "English")
+    finally:
+        stop(app)
+        system_config.write_text(language + "\n")
+
+    multiline = base/"multiline-details"
+    multiline.mkdir()
+    long_name = "Dlouhý název souboru s více samostatnými slovy a viditelným koncem v03.txt"
+    (multiline/long_name).write_text("Details wrap above the first field.")
+    app = launch("multiline-details", multiline)
+    try:
+        action(1)
+        capture("file-details-multiline", expected=("v03.txt", say("Kind", "Typ")))
+    finally:
+        stop(app)
+
     app = launch("special-first", top)
     try:
         key("Return")
@@ -313,10 +361,16 @@ def exercise_name_and_delete():
         capture("rename-conflict", expected=say("Name already exists", "Název už existuje"))
         key("BackSpace")
         capture("rename-conflict-correcting", expected="02.tx")
-        fill_name("", 5)
+        key("Escape")
+        assert_selected(capture("rename-conflict-cancelled", expected="01.txt"), "01.txt")
+        action(4)
+        fill_name("", 6)
         key("Return")
         capture("rename-invalid", expected=say("Enter a file name.", "Zadejte název souboru."))
-        type_ascii("renamed")
+        key("slash")
+        key("Return")
+        capture("rename-invalid-slash", expected=say("cannot contain /", "nesmí obsahovat /"))
+        fill_name("renamed", 1)
         key("period")
         type_ascii("txt")
         key("Return")
@@ -334,13 +388,16 @@ def exercise_name_and_delete():
         type_ascii("fresh")
         key("Return")
         capture("new-folder-conflict", expected=say("Name already exists", "Název už existuje"))
+        key("minus")
+        key("2")
+        capture("new-folder-conflict-correcting", expected=("fresh-2", say("Enter Create", "Enter Vytvořit")))
         key("Escape")
         action(5)
         capture("delete-folder", expected=say("Delete folder?", "Smazat složku?"))
         key("Escape")
         (sample/"fresh"/"content.txt").write_text("Recursive delete fixture")
         action(5)
-        capture("delete-folder-with-content", expected=say("and its contents", "včetně obsahu"))
+        capture("delete-folder-with-content", expected=say("All contents", "včetně obsahu"))
         key("Return")
         capture("delete-success", expected=say("Deleted", "Smazáno"))
         assert not (sample/"fresh").exists()
@@ -356,6 +413,12 @@ def exercise_name_and_delete():
         down(2)
         action(5)
         capture("delete-long-name", expected="v03.txt")
+        key("Escape")
+        action(4)
+        frame = capture("rename-long-name", delay=.3, expected=("v03.txt", say("Enter Save", "Enter Uložit")))
+        editor = next(obj for obj in frame["objects"] if obj.get("value_text") == long_name and not obj["hidden"])
+        content = next(obj for obj in frame["objects"] if obj["parent"] == editor["id"])
+        assert content["rect"][0] < editor["rect"][0] and content["rect"][0] + content["rect"][2] < 304, content
         key("Escape")
     finally:
         stop(app)
@@ -409,21 +472,32 @@ def exercise_usb():
         key("e")
         capture("eject-busy-retry", expected="UX EJECT")
         key("Return", delay=.6)
-        capture("eject-error", expected=say("Eject failed", "Vysunutí selhalo"))
+        capture("eject-error", expected=say("Keep the drive plugged in", "Disk ponechte připojený"))
+        key("Page_Down")
+        capture("eject-error-details-end", expected="journal flush returned an I/O error")
         clear_fixture("eject-fails")
         key("Escape")
         key("Escape")
         key("f")
         key("Return")
         capture("drive-empty", expected=say("Empty folder", "Prázdná složka"))
+        action(2, from_end=True)
+        type_ascii("last")
+        key("Return")
+        action(6)
+        key("Return")
+        capture("delete-last-on-usb", expected=(say("Empty folder", "Prázdná složka"), say("Deleted", "Smazáno")))
         key("Escape")
         key("Escape")
         capture("places-one-usb", expected="UX EJECT")
         attach(other)
         (second/"other.txt").write_text("Second")
         time.sleep(.85)
+        # Let any earlier connection notice expire before reading the second event.
+        capture("second-usb-connected", expected=("UX OTHER", say("U Choose drive", "U Vybrat disk")))
         key("u")
         capture("places-two-usb", expected="UX OTHER")
+        assert_selected(capture("second-usb-places", expected="UX OTHER"), "UX EJECT")
         key("Tab")
         capture("places-usb-menu", expected=say("E  Eject", "E  Vysunout"))
         key("Escape")
@@ -451,7 +525,7 @@ def exercise_usb():
         key("e")
         detach(second, lazy=True)
         time.sleep(.85)
-        capture("eject-disconnected", expected=say("Eject failed", "Vysunutí selhalo"))
+        capture("eject-disconnected", expected=say("Drive disconnected", "Disk byl odpojen"))
         key("Escape")
         attach(eject)
         time.sleep(.87)
@@ -495,8 +569,9 @@ def exercise_usb_interruptions():
         action(6)
         detach(mount, lazy=True)
         time.sleep(.90)
-        capture("delete-drive-disconnected", expected=say("Deletion interrupted", "Mazání přerušeno"))
+        capture("delete-drive-disconnected", expected=say("Deletion did not start", "Mazání se nespustilo"))
         key("Escape")
+        assert_selected(capture("delete-disconnected-return", expected=say("Places", "Umístění")), say("Home", "Domů"))
         attach(copy)
         time.sleep(.85)
         key("u")
@@ -512,7 +587,7 @@ def exercise_usb_interruptions():
         time.sleep(.85)
         detach(mount, lazy=True)
         time.sleep(.85)
-        capture("preview-drive-disconnected-neighbor", expected="UX OTHER")
+        capture("preview-drive-disconnected-neighbor", expected=("UX OTHER", say("Preview closed", "Náhled zavřen")))
     finally:
         stop(app)
         if not os.path.ismount(mount):
@@ -558,7 +633,7 @@ def exercise_copy():
         key("Return")
         capture("copy-confirm", expected=say("Copy here?", "Zkopírovat sem?"))
         key("Escape")
-        capture("copy-confirm-dismissed", expected="01-target")
+        capture("copy-confirm-dismissed", expected=("01-target", say("Paste via Tab", "Vložit přes Tab")))
         action(0)
         key("Return")
         wait_for(marker.exists)
@@ -613,6 +688,10 @@ def exercise_copy():
         capture("copy-progress-bytes", delay=.20, expected=say("3 MiB of 8 MiB", "3 MiB z 8 MiB"))
         key("Escape")
         time.sleep(3.05)
+        capture("copy-cancelled-after-bytes", expected=say("Copy cancelled", "Kopírování zrušeno"))
+        assert (dest/orig.name).stat().st_size == 8 * 1024 * 1024
+        assert not list(dest.glob(".files-transfer-*"))
+        assert not (dest/"02-source copy copy.bin").exists()
     finally:
         stop(app)
         marker.unlink(missing_ok=True)
@@ -662,7 +741,7 @@ def exercise_copy_disconnect(from_usb, move=False):
             # Home contains the deterministic local destination in this namespace.
             action(0)
         else:
-            orig = sample/("02-source.bin" if move else "source.bin")
+            orig = sample/"02-source.bin"
             orig.write_bytes(bytes(8 * 1024 * 1024))
             # Re-enter the test directory so its file is picked up by the list.
             key("Escape")
@@ -678,6 +757,12 @@ def exercise_copy_disconnect(from_usb, move=False):
             action(1)
         if move:
             capture("move-confirm", expected=say("Move here?", "Přesunout sem?"))
+            key("Escape")
+            capture("move-confirm-dismissed", expected=say("Paste via Tab", "Vložit přes Tab"))
+            key("Tab")
+            capture("move-clipboard-paste-menu", expected=say("Paste", "Vložit"))
+            key("x")
+            key("Return")
         key("Return")
         wait_for(marker.exists)
         if move:
@@ -716,12 +801,186 @@ def exercise_copy_disconnect(from_usb, move=False):
             detach(mount, lazy=True)
 
 
+def exercise_retained_copy():
+    sample = base/"retained-copy"
+    sample.mkdir()
+    original = sample/"source.bin"
+    original.write_bytes(bytes(8 * 1024 * 1024))
+    mount = copy[0]
+    app = launch("retained-copy", sample, LD_PRELOAD=str(base/"slow-copy.so"),
+                 FILES_COPY_MARKER=str(marker), FILES_COPY_SLOW_AFTER=str(3 * 1024 * 1024),
+                 FILES_AUDIT_KEEP_STAGE="1")
+    try:
+        action(2)
+        attach(copy)
+        time.sleep(.9)
+        key("u")
+        action(1)
+        key("Return")
+        wait_for(marker.exists)
+        detach(mount, lazy=True)
+        time.sleep(3.1)
+        capture("copy-target-partial-retained", expected=say("A partial copy may remain", "může být neúplná kopie"))
+        attach(copy)
+        stage, = mount.glob(".files-transfer-*")
+        payload = stage/"payload"
+        assert 0 < payload.stat().st_size < original.stat().st_size
+        key("Escape")
+        time.sleep(.85)
+        key("u")
+        capture("copy-target-partial-reconnected", expected=".files-transfer-")
+        shutil.rmtree(stage)
+    finally:
+        stop(app)
+        marker.unlink(missing_ok=True)
+        if os.path.ismount(mount):
+            detach(mount)
+
+
+def exercise_move_partial():
+    sample = base/"move-partial"
+    sample.mkdir()
+    orig = sample/"01-source.bin"
+    orig.write_bytes(bytes(8 * 1024 * 1024))
+    mount = copy[0]
+    app = launch("move-partial", sample, LD_PRELOAD=str(base/"slow-copy.so"),
+                 FILES_COPY_MARKER=str(marker), FILES_COPY_SLOW_AFTER=str(3 * 1024 * 1024))
+    try:
+        action(3)
+        attach(copy)
+        time.sleep(.9)
+        key("u")
+        action(1)
+        key("Return")
+        wait_for(marker.exists)
+        capture("move-progress-bytes", expected=say("3 MiB of 8 MiB", "3 MiB z 8 MiB"))
+        key("Escape")
+        capture("move-cancelling-after-bytes", expected=say("Cancelling move", "Ruším přesun"))
+        time.sleep(3.05)
+        capture("move-cancelled-after-bytes-target", expected=say("source kept", "zdroj zachován"))
+        assert orig.stat().st_size == 8 * 1024 * 1024 and not (mount/orig.name).exists()
+        assert not list(mount.glob(".files-transfer-*"))
+    finally:
+        stop(app)
+        marker.unlink(missing_ok=True)
+        if os.path.ismount(mount):
+            detach(mount)
+    app = launch("move-partial-source", sample)
+    try:
+        assert_selected(capture("move-cancelled-after-bytes-source", expected="01-source.bin"), "01-source.bin")
+    finally:
+        stop(app)
+
+
+def exercise_eject_long():
+    fixtures = [disk(name) for name in ("01 FIRST", "02 SECOND", "03 THIRD", "04 FOURTH",
+                  "05 USB with a very long distinguishing name v03", "06 NEIGHBOR", "07 LAST")]
+    for fixture in fixtures:
+        attach(fixture)
+    app = launch("eject-long", base)
+    try:
+        down(4)
+        key("e")
+        capture("eject-long-confirm", expected=("v03", say("Eject drive?", "Vysunout disk?")))
+        with (fixtures[4][0]/"busy").open("w") as busy:
+            key("Return")
+            capture("wait-eject-long-busy", expected=say("Drive is busy", "Disk je zaneprázdněn"), keep=False)
+        key("Escape")
+        key("e")
+        key("Return")
+        frames = capture("eject-long-retry-success", expected=("06 NEIGHBOR", "v03", say("ejected", "vysunut")))
+        assert_selected(frames, "06 NEIGHBOR")
+        assert not os.path.ismount(fixtures[4][0])
+    finally:
+        stop(app)
+        for mount, _ in fixtures:
+            if os.path.ismount(mount):
+                detach(mount)
+
+
+
+def exercise_additional_storage_states():
+    sample = base/"additional-storage"
+    sample.mkdir()
+    gone = sample/"gone"
+    gone.mkdir()
+    app = launch("additional-storage", sample)
+    try:
+        gone.rmdir()
+        gone.write_text("A file replaced the folder after the list was read.")
+        key("Return")
+        capture("folder-disappeared", expected=say("Folder not found", "Složka nenalezena"))
+        attach(copy)
+        time.sleep(.9)
+        key("u")
+        action(2, from_end=True)
+        type_ascii("draft")
+        detach(copy[0], lazy=True)
+        time.sleep(.9)
+        capture("new-folder-drive-disconnected", expected=say("Folder creation interrupted", "Vytváření složky přerušeno"))
+    finally:
+        stop(app)
+        if os.path.ismount(copy[0]):
+            detach(copy[0])
+
+
+def exercise_transfer_unplug_variants():
+    cases = (
+        ("move-source-disconnected", True, False, True),
+        ("move-target-disconnected", False, True, True),
+        ("copy-both-disconnected", True, True, False),
+    )
+    for name, source_usb, target_usb, move in cases:
+        sample = base/name
+        sample.mkdir()
+        source = attach(copy) if source_usb else sample
+        origin = source/"probe.bin"
+        origin.write_bytes(bytes(8 * 1024 * 1024))
+        app = launch(name, sample, LD_PRELOAD=str(base/"slow-copy.so"), FILES_COPY_MARKER=str(marker))
+        try:
+            if source_usb:
+                key("Return")
+            action((3 if move else 2) + source_usb)
+            if target_usb:
+                target = attach(other)/"00-unplug-target"
+                target.mkdir(exist_ok=True)
+                time.sleep(.9)
+                key("u")
+                if source_usb:
+                    key("x")
+                    key("Return")
+                key("Return")
+            else:
+                key("Escape")
+                key("x")
+                key("Return")
+            action(int(target_usb))
+            key("Return")
+            wait_for(marker.exists)
+            for path, active in ((copy[0], source_usb), (other[0], target_usb)):
+                if active:
+                    detach(path, lazy=True)
+            expected = say("Move interrupted", "Přesun přerušen") if move else say(
+                "Source and target drives disconnected", "Zdrojový i cílový disk odpojen")
+            capture(name, delay=3.1, expected=expected)
+        finally:
+            stop(app)
+            marker.unlink(missing_ok=True)
+            if source_usb and not os.path.ismount(source):
+                attach(copy)
+            origin.unlink()
+            for path, _ in (copy, other):
+                if os.path.ismount(path):
+                    detach(path)
+
+
 def exercise_package():
     sample = base/"package"
     sample.mkdir()
     deb(sample/"01-balíček.deb", True)
     deb(sample/"02-plain.deb", False)
     deb(sample/"03-wrong-architecture.deb", False, "s390x")
+    deb(sample/"06-dependencies.deb", False, depends="bash (>= 5.0), debian-archive-keyring (>= 2023.3)")
     (sample/"04-corrupt.deb").write_text("Not a Debian archive")
     damaged = sample/"05-damaged.deb"
     shutil.copyfile(sample/"02-plain.deb", damaged)
@@ -749,6 +1008,13 @@ def exercise_package():
         capture("install-password", expected=say("Password to install", "Heslo pro instalaci"))
         type_ascii("fixture")
         capture("install-password-masked", expected="*******")
+        key("Escape")
+        capture("install-password-cancelled", expected="01-balíček.deb")
+        key("Return")
+        wait_for_install_review()
+        key("Return")
+        capture("install-password-reopened", expected=say("Enter your account password", "Zadejte heslo svého účtu"))
+        type_ascii("fixture")
         (Path(os.environ["UX2_ROOT"])/"reject-password").touch()
         key("Return", delay=.53)
         capture("install-password-retry", expected=say("Incorrect password", "Nesprávné heslo"))
@@ -757,8 +1023,9 @@ def exercise_package():
         key("Return", delay=.5)
         capture("wait-password-retry", expected=say("Incorrect password", "Nesprávné heslo"), keep=False)
         type_ascii("fixture")
+        capture("install-password-last-attempt", expected=say("Attempt 3 of 3", "Pokus 3 ze 3"))
         key("Return")
-        capture("install-password-failed", expected=say("Sudo authentication failed", "Ověření hesla sudo selhalo"))
+        capture("install-password-failed", expected=say("verify your account", "Účet se nepodařilo ověřit"))
         clear_fixture("reject-password")
         key("Escape")
         clear_fixture("require-password")
@@ -768,10 +1035,11 @@ def exercise_package():
         key("Return")
         capture("install-progress", expected=say("Installing package", "Instaluji balíček"))
         time.sleep(.6)
-        capture("install-failure", expected=say("Installation failed", "Instalace selhala"))
+        capture("install-failure", expected=(say("Installation failed", "Instalace selhala"),
+                                             say("isn’t enough disk space", "Na disku není dost místa")))
         key("Page_Down")
         key("Page_Down")
-        capture("install-failure-details-end", expected=say("Installation failed", "Instalace selhala"))
+        capture("install-failure-details-end", expected=say("Press F to return", "Klávesou F se vraťte"))
         clear_fixture("install-fails")
         key("Escape")
         key("Return")
@@ -785,10 +1053,24 @@ def exercise_package():
         (Path(os.environ["UX2_ROOT"])/"apt-fails").touch()
         key("Return", delay=1.6)
         capture("deb-apt-unavailable", expected=say("Installation blocked", "Instalace zablokována"))
+        down(2)
+        capture("deb-apt-unavailable-details", expected=(say("Installation blocked", "Instalace zablokována"),
+                                                       "dependency resolution failed"))
         clear_fixture("apt-fails")
         key("Escape")
         key("Return", delay=1.6)
         capture("deb-no-scripts", expected="1.0.0 · all")
+        key("Escape")
+        stage_links = set(Path("/var/tmp").glob("cardputer-files-deb-*/package.deb"))
+        key("Return")
+        wait_for_install_review()
+        staged, = set(Path("/var/tmp").glob("cardputer-files-deb-*/package.deb")) - stage_links
+        staged.unlink()
+        key("Return")
+        capture("install-prepared-unavailable", expected=say("prepared package changed", "Balíček se po kontrole změnil"))
+        key("Escape")
+        key("Return")
+        wait_for_install_review()
         helper = Path("/usr/share/APPLaunch/bin/M5CardputerZero-Files")
         disabled = helper.with_suffix(".disabled")
         helper.rename(disabled)
@@ -820,11 +1102,17 @@ def exercise_package():
         key("x")
         key("Return", delay=.9)
         capture("deb-damaged-package", expected=say("Damaged Debian package", "Poškozený balíček Debian"))
-        key("Page_Down")
-        key("Page_Down")
-        capture("deb-error-details-end", expected=say("Damaged Debian package", "Poškozený balíček Debian"))
+        for _ in range(8):
+            key("Page_Down", delay=.02, held=.04)
+        capture("deb-error-details-end", expected=("returned error exit status 2",
+                                                   say("Damaged Debian package", "Poškozený balíček Debian")))
         key("Escape")
-        for _ in range(3):
+        key("x")
+        key("Return")
+        wait_for_install_review()
+        capture("deb-with-dependencies", expected="debian-archive-")
+        key("Escape")
+        for _ in range(4):
             key("f")
         store = helper.with_name("M5CardputerZero-AppStore")
         store.write_text("#!/bin/sh\nexit 2\n")
@@ -857,6 +1145,12 @@ def exercise_previews():
         "-c:v", "mpeg4", "-threads", "1", sample/"05-video.mp4")
     (sample/"06-broken.mp4").write_text("Broken")
     (sample/"07-broken.wav").write_text("Broken")
+    (sample/"08-empty.txt").touch()
+    (sample/"09-wide.txt").write_text("/" + "široká-cesta/" * 23 + "poslední-znak-Ž")
+    long_video = "10-Dlouhý název videa s odlišitelným koncem v03.mp4"
+    run("ffmpeg", "-hide_banner", "-loglevel", "error", "-threads", "1",
+        "-f", "lavfi", "-i", "smptebars=size=144x90:rate=15", "-t", "22",
+        "-c:v", "mpeg4", "-threads", "1", sample/long_video)
     media_tools = base/"media-tools"
     media_tools.mkdir()
     slow_video = media_tools/"ffmpeg"
@@ -884,7 +1178,7 @@ def exercise_previews():
         key("Escape")
         key("x")
         key("Return")
-        capture("image-error", expected=say("No preview", "Náhled není dostupný"))
+        capture("image-error", expected=say("Preview unavailable", "Náhled není dostupný"))
         key("Escape")
         key("x")
         key("Return")
@@ -924,6 +1218,33 @@ def exercise_previews():
         key("Return")
         capture("audio-error", expected=say("Cannot play audio", "Zvuk nelze přehrát"))
         key("Escape")
+        key("x")
+        key("Return")
+        capture("text-empty", expected=say("Empty file", "Prázdný soubor"))
+        key("Escape")
+        key("x")
+        key("Return")
+        capture("text-wide", expected="/široká-cesta/")
+        key("Page_Down")
+        end = capture("text-wide-end", expected=("poslední-znak-Ž", "F↑"))
+        assert not any("X↓" in (obj["text"] or "") for obj in end["objects"] if not obj["hidden"])
+        key("Escape")
+        key("x")
+        key("Return")
+        capture("wait-video-frame", expected=say("Space Pause", "Mezera Pauza"), keep=False)
+        key("space")
+        pause = say("Ⅱ Paused", "Ⅱ Pauza")
+        before = capture("video-paused-long-name", expected=("v03.mp4", pause))
+        key("c")
+        after = capture("video-paused-after-seek", expected=(pause, say("Space Play", "Mezera Hrát")))
+
+        def pause_seconds(frame):
+            title = next(obj["text"] for obj in frame["objects"] if not obj["hidden"] and pause in (obj["text"] or ""))
+            minutes, seconds = map(int, re.search(r"(\d+):(\d+)$", title).groups())
+            return 60 * minutes + seconds
+
+        assert pause_seconds(after) - pause_seconds(before) == 10
+        key("Escape")
     finally:
         stop(app)
 
@@ -958,13 +1279,26 @@ def exercise_filesystem_errors():
     try:
         key("Return")
         capture("permission-denied", expected=say("Permission denied", "Přístup odepřen"))
+        key("Escape")
+        action(1, from_end=True)
+        key("x")
+        key("Return")
+        capture("language-save-failed", expected=say("Could not save language", "Jazyk se nepodařilo uložit"))
+        assert (config/"cardputer-files/language").read_text().strip() == language
     finally:
         stop(permission)
     permission = launch("text-permission", unreadable, LD_PRELOAD=str(base/"read-fault.so"),
                         FILES_AUDIT_READ_FAULT=str(unreadable_text))
     try:
         key("Return")
-        capture("text-read-error", expected=say("Read failed", "Čtení se nezdařilo"))
+        capture("text-media-error", expected=say("Read failed", "Čtení se nezdařilo"))
+    finally:
+        stop(permission)
+    permission = launch("text-denied", unreadable, LD_PRELOAD=str(base/"read-fault.so"),
+                        FILES_AUDIT_READ_FAULT=str(unreadable_text), FILES_AUDIT_DENY_READ="1")
+    try:
+        key("Return")
+        capture("text-read-error", expected=say("Permission to read this file was denied", "Chybí oprávnění ke čtení"))
     finally:
         stop(permission)
     app = launch("filesystem-errors", source)
@@ -976,12 +1310,34 @@ def exercise_filesystem_errors():
         key("Return")
         action(0)
         key("Return", delay=.5)
-        capture("disk-full", expected=say("Not enough space", "Na cíli není dost místa"))
+        capture("disk-full", expected=say("Not enough space", "Nedostatek místa"))
         key("Escape")
+        (target/"existing.txt").write_text("Read-only fixture")
+        key("Escape")
+        key("Return")
         run("mount", "-o", "remount,ro", target)
-        action(0)
+        action(4)
         key("Return", delay=.5)
         capture("read-only", expected=say("Disk is read-only", "Disk je jen pro čtení"))
+        key("Escape")
+        action(5)
+        key("a")
+        key("Return")
+        capture("rename-read-only", expected=("existing.txta", say("Disk is read-only", "Disk je jen pro čtení")))
+        key("Escape")
+        action(6)
+        key("Return")
+        capture("delete-read-only", expected=(say("Delete failed", "Mazání selhalo"), say("Disk is read-only", "Disk je jen pro čtení")))
+        key("Escape")
+        action(2, from_end=True)
+        type_ascii("new")
+        key("Return")
+        capture("new-folder-read-only", expected=(say("New folder", "Nová složka"), say("Disk is read-only", "Disk je jen pro čtení")))
+        key("Escape")
+        key("Escape")
+        action(6)
+        key("Return")
+        capture("delete-mounted-filesystem", expected=say("Folder contains a mounted filesystem", "Složka obsahuje připojený souborový systém"))
         key("Escape")
     finally:
         stop(app)
@@ -1010,7 +1366,10 @@ for language in os.environ.get("FILES_AUDIT_LANGUAGES", "cs,en").split(","):
         "copy-target": lambda: exercise_copy_disconnect(False),
         "move": lambda: exercise_copy_disconnect(False, move=True), "package": exercise_package,
         "previews": exercise_previews, "errors": exercise_filesystem_errors,
-        "folder-copy": exercise_copy_folder,
+        "folder-copy": exercise_copy_folder, "move-partial": exercise_move_partial,
+        "eject-long": exercise_eject_long, "retained-copy": exercise_retained_copy,
+        "additional-storage": exercise_additional_storage_states,
+        "transfer-unplug-variants": exercise_transfer_unplug_variants,
     }
     selected = os.environ.get("FILES_AUDIT_SCENARIOS", ",".join(scenarios)).split(",")
     for scenario in selected:

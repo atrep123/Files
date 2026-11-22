@@ -49,7 +49,7 @@ cat >/usr/bin/udisksctl <<'EOF'
 #!/bin/sh
 [ "$1" = unmount ] && [ "$2" = --no-user-interaction ] && [ "$3" = -b ] || exit 2
 if [ -e "$UX2_ROOT/eject-fails" ]; then
-    echo 'Fixture: device could not be unmounted' >&2
+    printf '%s\n' 'Could not flush the filesystem.' 'Unmount request was rejected by the device.' 'Final journal flush returned an I/O error.' >&2
     exit 1
 fi
 sleep 0.40
@@ -65,7 +65,7 @@ cat >/usr/bin/apt-get <<'EOF'
 #!/bin/sh
 case " $* " in *' --simulate '*)
     if [ -e "$UX2_ROOT/apt-fails" ]; then
-        echo 'Fixture: APT could not resolve the package plan' >&2
+        echo 'E: dependency resolution failed for ux2-files-test' >&2
         exit 1
     fi
     ;;
@@ -78,7 +78,7 @@ cat >/usr/bin/sudo <<'EOF'
 #!/bin/sh
 if [ -e "$UX2_ROOT/install-fails" ]; then
     sleep 0.55
-    echo 'Fixture: package manager returned an error' >&2
+    printf '%s\n' 'No space left on device.' '' 'dpkg: could not finish unpacking the package.' '' 'dpkg --audit reported no unfinished packages. Check the error above before retrying.' >&2
     exit 2
 fi
 if [ -e "$UX2_ROOT/reject-password" ] && [ "$1" = -S ]; then

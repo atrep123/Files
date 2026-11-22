@@ -49,17 +49,29 @@ inline void hidden(lv_obj_t* obj, bool hide)
 inline void line(lv_obj_t* label, const std::string& text, int width, const lv_font_t* font,
                  size_t limit = std::string::npos, bool extension = false)
 {
-    lv_label_set_text(label, fitText(text, width, font, limit, extension).c_str());
+    const auto fitted = fitText(text, width, font, limit, extension);
+    if (fitted != lv_label_get_text(label)) lv_label_set_text(label, fitted.c_str());
 }
 
 inline void keyLegend(lv_obj_t* label, std::string_view keys)
 {
+    constexpr std::string_view extraGap = " ";
+    size_t groups = 0;
+    for (size_t at = keys.find(keyGap); at != std::string_view::npos; at = keys.find(keyGap, at + keyGap.size())) {
+        ++groups;
+    }
+    const auto* font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
+    const bool expand = groups && textLength(keys) + groups <= 44 &&
+        textWidth(keys, font) + static_cast<int>(groups) * textWidth(extraGap, font) <= lv_obj_get_style_width(label, LV_PART_MAIN);
     std::string formatted;
     while (!keys.empty()) {
         const auto end = keys.find(keyGap);
         const auto item = keys.substr(0, end);
         const auto space = item.find(' ');
-        if (!formatted.empty()) formatted += keyGap;
+        if (!formatted.empty()) {
+            formatted += keyGap;
+            if (expand) formatted += extraGap;
+        }
         if (space == std::string_view::npos || item == "F↑ X↓" || item == "Z← C→") {
             formatted += item;
         } else {

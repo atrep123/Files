@@ -7,6 +7,7 @@ namespace files {
 
 enum class AudioPlaybackState {
     Stopped,
+    Ready,
     Playing,
     Paused,
     Error,
@@ -20,6 +21,7 @@ struct AudioPreviewFile {
 inline const char* audioPlaybackStateName(AudioPlaybackState state)
 {
     switch (state) {
+        case AudioPlaybackState::Ready: return "Ready";
         case AudioPlaybackState::Stopped:
             return "Stopped";
         case AudioPlaybackState::Playing:
