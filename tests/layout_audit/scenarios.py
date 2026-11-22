@@ -924,6 +924,20 @@ def exercise_previews():
     finally:
         stop(app)
 
+    app = launch("audio-with-usb", sample)
+    try:
+        down(3)
+        key("Return")
+        key("6")
+        attach(other)
+        time.sleep(.90)
+        capture("audio-usb", expected=("UX OTHER", "U USB", say("Esc Back", "Esc Zpět")))
+        key("Escape")
+    finally:
+        stop(app)
+        if os.path.ismount(other[0]):
+            detach(other[0])
+
 
 def exercise_filesystem_errors():
     source = base/"errors"

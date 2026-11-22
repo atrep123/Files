@@ -517,11 +517,11 @@ void FilesApp::showHelpPage()
         "Tab Menu · U USB · E Eject\n"
         "Esc Back · Hold Esc Exit\n"
         "PgUp/PgDn Page\n"
-        "Enter on .deb · Review package",
+        "Enter .deb · Review package",
         "F↑ X↓ Pohyb · Enter Otevřít\n"
         "Tab Nabídka · U USB · E Vysunout\n"
         "Esc Zpět · Držet Esc Ukončit\n"
-        "PgUp/PgDn Listovat\n"
+        "PgUp/PgDn Strany\n"
         "Enter .deb · Náhled"));
     if (!_help_page) {
         spdlog::error("FilesApp: failed to create help page");
@@ -576,7 +576,9 @@ void FilesApp::updateVolumeNoticeVisibility()
     const bool showUsb = _browser_vm.hasRemovableVolumes() &&
                          (_help_active || _router.page() == PageId::Preview) && !hostRenderingSuspended();
     if (showUsb) {
-        const auto* hint = local("U Open USB", "U Otevřít USB");
+        const auto* preview = _model.preview().page().get();
+        const auto* hint = !_help_active && preview && preview->usesWideFooter() ?
+            "U USB" : local("U Open USB", "U Otevřít USB");
         const int width = textWidth(hint, uiFont12());
         lv_obj_set_x(_preview_usb_hint, 312 - width);
         lv_obj_set_width(_preview_usb_hint, width);

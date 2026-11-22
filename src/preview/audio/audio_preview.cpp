@@ -32,6 +32,8 @@ public:
         return _title;
     }
 
+    bool usesWideFooter() const override { return true; }
+
     void attach(lv_obj_t* parent) override
     {
         _view_model = std::make_unique<AudioPreviewViewModel>(_model);

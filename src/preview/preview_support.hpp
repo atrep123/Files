@@ -32,6 +32,7 @@ public:
     {
         (void)nowMs;
     }
+    virtual bool usesWideFooter() const { return false; }
     virtual bool shouldClose() const
     {
         return false;
