@@ -73,6 +73,9 @@ def capture(name, delay=.11, expected=None, *, keep=True):
     assert snap.size == (320, 170), snap.size
     if name == "video-playing":
         assert snap.crop((8, 24, 312, 146)).getbbox(), "SDL video frame has no pixels"
+    if name == "audio-usb":
+        clocks = [obj["ink"] for obj in document["objects"] if not obj["hidden"] and "0:" in (obj["text"] or "")]
+        assert len(clocks) == 2 and all(y + height <= 126 for _, y, _, height in clocks), clocks
     for obj in document["objects"]:
         if obj.get("font"):
             assert obj["font"]["size"] is not None, (name, obj["font"], obj["text"])

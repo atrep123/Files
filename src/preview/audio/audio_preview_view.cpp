@@ -50,7 +50,8 @@ constexpr int32_t kProgressBarHeight       = 5;
 constexpr int32_t kProgressBarRadius       = 2;
 constexpr uint32_t kProgressTrackColor     = ui::black;
 constexpr uint32_t kProgressFillColor      = ui::accent;
-constexpr int32_t kTimeLabelY              = 117;
+// Keep both clocks above the one-row connection notice.
+constexpr int32_t kTimeLabelY              = 111;
 constexpr int32_t kTimeLabelWidth          = 96;
 constexpr uint32_t kTimeTextColor          = ui::secondary;
 std::string fileTitle(const AudioPreviewFile& file)
