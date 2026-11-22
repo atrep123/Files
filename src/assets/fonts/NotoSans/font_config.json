@@ -22,6 +22,14 @@
             ],
             "symbols": [
                 "–—‘’“”…•·"
+            ],
+            "additional_fonts": [
+                {
+                    "source": "NotoSans-SemiBold.ttf",
+                    "ranges": [
+                        "0x00AD"
+                    ]
+                }
             ]
         },
         {
@@ -46,6 +54,14 @@
             ],
             "symbols": [
                 "–—‘’“”…•·"
+            ],
+            "additional_fonts": [
+                {
+                    "source": "NotoSans-SemiBold.ttf",
+                    "ranges": [
+                        "0x00AD"
+                    ]
+                }
             ]
         },
         {
@@ -81,6 +97,14 @@
                             16,
                             55
                         ]
+                    ]
+                }
+            ],
+            "additional_fonts": [
+                {
+                    "source": "NotoSans-SemiBold.ttf",
+                    "ranges": [
+                        "0x104-0x10F,0x114-0x119,0x11C-0x127,0x12C-0x142,0x145-0x146,0x149-0x14B,0x150-0x151,0x154-0x167,0x16E-0x17F"
                     ]
                 }
             ]
@@ -120,6 +144,14 @@
                         ]
                     ]
                 }
+            ],
+            "additional_fonts": [
+                {
+                    "source": "NotoSans-SemiBold.ttf",
+                    "ranges": [
+                        "0x104-0x10F,0x114-0x119,0x11C-0x127,0x12C-0x142,0x145-0x146,0x149-0x14B,0x150-0x151,0x154-0x167,0x16E-0x17F"
+                    ]
+                }
             ]
         },
         {
@@ -157,6 +189,14 @@
                         ]
                     ]
                 }
+            ],
+            "additional_fonts": [
+                {
+                    "source": "NotoSans-SemiBold.ttf",
+                    "ranges": [
+                        "0x104-0x10F,0x114-0x119,0x11C-0x127,0x12C-0x142,0x145-0x146,0x149-0x14B,0x150-0x151,0x154-0x167,0x16E-0x17F"
+                    ]
+                }
             ]
         },
         {
@@ -171,7 +211,7 @@
             "bpp": 4,
             "ranges": [
                 "0x20-0x7E",
-                "0xA0-0xFF",
+                "0xA0-0x17F",
                 "0x2190-0x21FF",
                 "0x3040-0x309F",
                 "0x30A0-0x30FF",
@@ -189,6 +229,14 @@
                             16,
                             47
                         ]
+                    ]
+                }
+            ],
+            "additional_fonts": [
+                {
+                    "source": "NotoSans-SemiBold.ttf",
+                    "ranges": [
+                        "0x104-0x10F,0x114-0x119,0x11C-0x127,0x12C-0x142,0x145-0x146,0x149-0x14B,0x150-0x151,0x154-0x167,0x16E-0x17F"
                     ]
                 }
             ]
@@ -205,7 +253,7 @@
             "bpp": 4,
             "ranges": [
                 "0x20-0x7E",
-                "0xA0-0xFF",
+                "0xA0-0x17F",
                 "0x2190-0x21FF",
                 "0x3040-0x309F",
                 "0x30A0-0x30FF",
@@ -225,6 +273,14 @@
                         ]
                     ]
                 }
+            ],
+            "additional_fonts": [
+                {
+                    "source": "NotoSans-SemiBold.ttf",
+                    "ranges": [
+                        "0x104-0x10F,0x114-0x119,0x11C-0x127,0x12C-0x142,0x145-0x146,0x149-0x14B,0x150-0x151,0x154-0x167,0x16E-0x17F"
+                    ]
+                }
             ]
         },
         {
@@ -239,7 +295,7 @@
             "bpp": 4,
             "ranges": [
                 "0x20-0x7E",
-                "0xA0-0xFF",
+                "0xA0-0x17F",
                 "0x2190-0x21FF",
                 "0x3040-0x309F",
                 "0x30A0-0x30FF",
@@ -257,6 +313,14 @@
                             16,
                             47
                         ]
+                    ]
+                }
+            ],
+            "additional_fonts": [
+                {
+                    "source": "NotoSans-SemiBold.ttf",
+                    "ranges": [
+                        "0x104-0x10F,0x114-0x119,0x11C-0x127,0x12C-0x142,0x145-0x146,0x149-0x14B,0x150-0x151,0x154-0x167,0x16E-0x17F"
                     ]
                 }
             ]

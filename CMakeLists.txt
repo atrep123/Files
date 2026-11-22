@@ -104,6 +104,9 @@ set(BOX2D_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(BOX2D_VALIDATE OFF CACHE BOOL "" FORCE)
 
 add_subdirectory("${FILES_LVGL_DIR}" EXCLUDE_FROM_ALL)
+# LVGL uses this font directly in its themes and widgets.
+set(FILES_DEFAULT_FONT_C "${FILES_SRC_DIR}/assets/res_c/font_montserrat_medium_14.c")
+target_sources(lvgl PRIVATE "${FILES_DEFAULT_FONT_C}")
 add_subdirectory("${FILES_SPDLOG_DIR}" EXCLUDE_FROM_ALL)
 add_subdirectory("${FILES_SMOOTH_UI_DIR}" EXCLUDE_FROM_ALL)
 add_subdirectory("${FILES_BOX2D_DIR}" EXCLUDE_FROM_ALL)
@@ -177,6 +180,7 @@ file(GLOB_RECURSE FILES_PREVIEW_CPP CONFIGURE_DEPENDS
 file(GLOB_RECURSE FILES_ASSET_C CONFIGURE_DEPENDS
     "${FILES_SRC_DIR}/assets/res_c/*.c"
 )
+list(REMOVE_ITEM FILES_ASSET_C "${FILES_DEFAULT_FONT_C}")
 
 add_executable(${FILES_BIN_NAME}
     ${FILES_CPP}
@@ -327,6 +331,10 @@ if(BUILD_TESTING)
 
     add_executable(font_coverage_tests
         tests/font_coverage_test.cpp
+        src/assets/font_assets.cpp
+        src/assets/res_c/font_noto_sans_jp_semibold_10.c
+        src/assets/res_c/font_noto_sans_jp_semibold_12.c
+        src/assets/res_c/font_noto_sans_jp_semibold_14.c
         src/assets/res_c/font_noto_sans_mono_semibold_12.c
         src/assets/res_c/font_noto_sans_mono_semibold_14.c
         src/assets/res_c/font_noto_sans_sc_semibold_10.c
