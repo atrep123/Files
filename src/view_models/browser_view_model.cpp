@@ -20,6 +20,9 @@ BrowserViewModel::BrowserViewModel(FilesRouter& router, FilesModel& model) : Vie
 
 BrowserViewModel::~BrowserViewModel()
 {
+    if (_transfer_control) {
+        _transfer_control->cancel();
+    }
     internal::clearSecret(_package_password);
 }
 
@@ -171,6 +174,10 @@ void BrowserViewModel::onKeyState(uint32_t key, bool pressed)
 
 void BrowserViewModel::tick(uint32_t nowMs)
 {
+    if (_storage_operation.valid()) {
+        tickStorage(nowMs);
+        return;
+    }
     if (packageDialogOpen()) {
         tickPackage(nowMs);
         return;
@@ -298,18 +305,15 @@ void BrowserViewModel::pasteCopiedToCurrentDirectory()
         return;
     }
 
-    const std::string pastedName = _pending_copy.file.name;
-    const auto result =
-        _pending_copy.cut ? _model.browser().moveEntryTo(_pending_copy.file, _model.browser().currentDirectory().get())
-                          : _model.browser().copyEntryTo(_pending_copy.file, _model.browser().currentDirectory().get());
-    if (!result) {
-        _model.browser().status().set(result.message);
-        return;
-    }
-    _model.browser().status().set("Pasted " + pastedName);
-    if (_pending_copy.cut) {
-        _pending_copy = PendingCopyFile{};
-    }
+    clearHeldSelection();
+    _transfer_control = std::make_shared<internal::TransferControl>();
+    _package_dialog.set({PackageDialogMode::Transferring, _pending_copy.cut ? "Move" : "Copy",
+                         _pending_copy.file.name + "\n0 bytes copied"});
+    _storage_operation = std::async(std::launch::async,
+        [entry = _pending_copy.file, cut = _pending_copy.cut, directory = currentDirectory().get(),
+         mountId = _model.browser().currentMountId(), control = _transfer_control] {
+            return FileBrowserModel::performTransfer(entry, directory, mountId, cut, control.get());
+        });
 }
 
 void BrowserViewModel::showInfoSelected()
@@ -466,16 +470,71 @@ void BrowserViewModel::activateSelectedAction()
             closeActionMenu();
             _model.browser().showLocations();
             break;
-        case BrowserAction::Eject: {
+        case BrowserAction::Eject:
             closeActionMenu();
-            const auto result = _model.browser().ejectSelected();
-            if (result) {
-                status().set(result.message);
-            } else {
-                _package_dialog.set({PackageDialogMode::Result, "Eject drive", result.message});
-            }
+            startEject();
             break;
+    }
+}
+
+void BrowserViewModel::startEject()
+{
+    const auto* entry = selectedEntry();
+    if (!entry || !entry->mountRoot) {
+        return;
+    }
+    clearHeldSelection();
+    _eject_progress = "Checking " + entry->name + "...";
+    _package_dialog.set({PackageDialogMode::Ejecting, "Eject drive", _eject_progress});
+    _storage_operation = std::async(std::launch::async, [this, mountId = entry->mountId] {
+        return FileBrowserModel::ejectDrive(mountId, [this](const std::string& message) {
+            std::lock_guard<std::mutex> lock(_eject_mutex);
+            _eject_progress = message;
+        });
+    });
+}
+
+void BrowserViewModel::tickStorage(uint32_t nowMs)
+{
+    auto dialog = _package_dialog.get();
+    const bool transfer = dialog.mode == PackageDialogMode::Transferring;
+    if (_storage_operation.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+        FileOperationResult result;
+        try {
+            result = _storage_operation.get();
+        } catch (const std::exception& error) {
+            result = {FileOperationStatus::Failed, error.what()};
         }
+        const bool cancelled = transfer && _transfer_control->cancelled();
+        _transfer_control.reset();
+        _model.browser().refresh(!transfer);
+        status().set(result.message);
+        if (result && transfer && _pending_copy.cut) {
+            _pending_copy = {};
+        }
+        if (result || cancelled) {
+            _package_dialog.set({});
+        } else {
+            _package_dialog.set({PackageDialogMode::Result, dialog.title, result.message});
+        }
+        return;
+    }
+    if (nowMs - _last_package_update < 125) {
+        return;
+    }
+    _last_package_update = nowMs;
+    if (transfer) {
+        if (_transfer_control->cancelled()) {
+            dialog.text = "Cancelling transfer...";
+        } else {
+            dialog.text = _pending_copy.file.name + "\n" + std::to_string(_transfer_control->bytes()) + " bytes copied";
+        }
+    } else {
+        std::lock_guard<std::mutex> lock(_eject_mutex);
+        dialog.text = _eject_progress;
+    }
+    if (dialog.text != _package_dialog.get().text) {
+        _package_dialog.set(std::move(dialog));
     }
 }
 
@@ -575,7 +634,16 @@ void BrowserViewModel::editPackagePassword(uint32_t key, const char* utf8)
 void BrowserViewModel::handlePackageKey(uint32_t key)
 {
     const auto mode = _package_dialog.get().mode;
-    if (mode == PackageDialogMode::Reading || mode == PackageDialogMode::Installing) {
+    if (mode == PackageDialogMode::Transferring) {
+        if (key == '\x1b' && _transfer_control->cancel()) {
+            auto dialog = _package_dialog.get();
+            dialog.text = "Cancelling transfer...";
+            _package_dialog.set(std::move(dialog));
+        }
+        return;
+    }
+    if (mode == PackageDialogMode::Reading || mode == PackageDialogMode::Installing ||
+        mode == PackageDialogMode::Ejecting) {
         return;
     }
     if (key == '\x1b' || (key == files_key::Left && mode != PackageDialogMode::Password)) {

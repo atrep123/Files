@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -21,6 +23,9 @@ enum class FilesystemTransferFailure {
     PublishFailed,
     SourceCleanupFailed,
     DriveDisconnected,
+    MountedSource,
+    Cancelled,
+    SyncFailed,
 };
 
 struct FilesystemTransferResult {
@@ -35,17 +40,42 @@ struct FilesystemTransferResult {
     }
 };
 
+class TransferControl {
+public:
+    bool cancel()
+    {
+        State expected = State::Copying;
+        return _state.compare_exchange_strong(expected, State::Cancelled);
+    }
+    bool cancelled() const { return _state.load() == State::Cancelled; }
+    bool beginCommit()
+    {
+        State expected = State::Copying;
+        return _state.compare_exchange_strong(expected, State::Committing);
+    }
+    void retry() { _state.store(State::Copying); }
+    void addBytes(uint64_t bytes) { _bytes.fetch_add(bytes, std::memory_order_relaxed); }
+    uint64_t bytes() const { return _bytes.load(std::memory_order_relaxed); }
+
+private:
+    enum class State { Copying, Cancelled, Committing };
+    std::atomic<State> _state{State::Copying};
+    std::atomic<uint64_t> _bytes{0};
+};
+
 // Copies into destinationDirectory without replacing or merging an existing entry.
 // Copying into the source directory chooses " copy", " copy 2", ... automatically.
 FilesystemTransferResult copyPathToDirectory(const std::filesystem::path& source,
                                              const std::filesystem::path& destinationDirectory,
-                                             const std::function<bool()>& connected = {});
+                                             const std::function<bool()>& connected = {},
+                                             TransferControl* control = nullptr);
 
 // Moves into destinationDirectory without replacing an existing entry. Cross-device
-// moves use a validated staged copy and remove the source only after publication.
+// moves sync the staged copy and its final parent before removing the source.
 FilesystemTransferResult movePathToDirectory(const std::filesystem::path& source,
                                              const std::filesystem::path& destinationDirectory,
-                                             const std::function<bool()>& connected = {});
+                                             const std::function<bool()>& connected = {},
+                                             TransferControl* control = nullptr);
 
 const char* filesystemTransferFailureName(FilesystemTransferFailure failure);
 

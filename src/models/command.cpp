@@ -1,9 +1,11 @@
 #include "models/command.hpp"
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <fcntl.h>
 #include <spawn.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -39,10 +41,21 @@ struct CommandFds {
 }  // namespace
 
 CommandResult runCommand(const std::vector<std::string>& arguments, const CommandOutput& onOutput,
-                         const std::string& input, bool captureStdout)
+                         const std::string& input, bool captureStdout, int stdinFd)
 {
+    if (arguments.empty() || (!input.empty() && stdinFd >= 0)) {
+        return {-1, "Invalid command arguments"};
+    }
     CommandFds fds;
-    if (pipe(fds.output) < 0 || (!input.empty() && socketpair(AF_UNIX, SOCK_STREAM, 0, fds.input) < 0)) {
+#if defined(__linux__)
+    const int pipeResult = pipe2(fds.output, O_CLOEXEC);
+    constexpr int socketType = SOCK_STREAM | SOCK_CLOEXEC;
+#else
+    const int pipeResult = pipe(fds.output);
+    constexpr int socketType = SOCK_STREAM;
+#endif
+    if (pipeResult < 0 || (!input.empty() && socketpair(AF_UNIX, socketType, 0, fds.input) < 0) ||
+        fcntl(fds.output[0], F_SETFL, O_NONBLOCK) < 0) {
         return {-1, std::strerror(errno)};
     }
 #if defined(__APPLE__)
@@ -59,7 +72,9 @@ CommandResult runCommand(const std::vector<std::string>& arguments, const Comman
     if (error) {
         return {-1, std::strerror(error)};
     }
-    if (input.empty()) {
+    if (stdinFd >= 0) {
+        error = posix_spawn_file_actions_adddup2(&actions, stdinFd, STDIN_FILENO);
+    } else if (input.empty()) {
         error = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
     } else {
         error = posix_spawn_file_actions_adddup2(&actions, fds.input[1], STDIN_FILENO);
@@ -126,17 +141,47 @@ CommandResult runCommand(const std::vector<std::string>& arguments, const Comman
     }
 
     constexpr size_t outputLimit = 128 * 1024;
+    constexpr auto drainLimit = std::chrono::milliseconds(150);
+    using Clock = std::chrono::steady_clock;
     CommandResult result;
     char buffer[4096];
+    bool eof = false;
     int readError = 0;
-    for (;;) {
+    int status = 0;
+    pid_t waited = 0;
+    Clock::time_point drainUntil;
+    while (!eof || waited == 0) {
+        if (waited == 0) {
+            do {
+                waited = waitpid(child, &status, eof ? 0 : WNOHANG);
+            } while (waited < 0 && errno == EINTR);
+            if (waited < 0) {
+                return {-1, std::strerror(errno)};
+            }
+            if (waited == child) {
+                drainUntil = Clock::now() + drainLimit;
+            }
+        }
+        if (eof || (waited == child && Clock::now() >= drainUntil)) {
+            break;
+        }
+        pollfd output{fds.output[0], POLLIN, 0};
+        const int ready = poll(&output, 1, 25);
+        if (ready < 0 && errno != EINTR) {
+            readError = errno;
+            eof = true;
+        }
+        if (ready <= 0) {
+            continue;
+        }
         const ssize_t count = read(fds.output[0], buffer, sizeof(buffer));
-        if (count < 0 && errno == EINTR) {
+        if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
             continue;
         }
         if (count <= 0) {
             readError = count < 0 ? errno : 0;
-            break;
+            eof = true;
+            continue;
         }
         std::string chunk(buffer, static_cast<size_t>(count));
         if (onOutput) {
@@ -145,15 +190,16 @@ CommandResult runCommand(const std::vector<std::string>& arguments, const Comman
         result.output += chunk;
         if (result.output.size() > outputLimit) {
             result.output.erase(0, result.output.size() - outputLimit);
+            result.outputTruncated = true;
         }
     }
-    int status = 0;
-    pid_t waited;
-    do {
-        waited = waitpid(child, &status, 0);
-    } while (waited < 0 && errno == EINTR);
-    if (!readError && waited == child && WIFEXITED(status)) {
+    if (readError) {
+        result.output += "\n" + std::string(std::strerror(readError));
+    }
+    if (WIFEXITED(status) && !readError) {
         result.exitCode = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+        result.exitCode = 128 + WTERMSIG(status);
     }
     return result;
 }

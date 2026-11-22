@@ -129,7 +129,13 @@ FileOperationResult transferError(const char* operation, const internal::Filesys
     if (isPermissionError(transfer.error)) {
         return errorResult(FileOperationStatus::PermissionDenied, "Permission denied");
     }
-    return errorResult(FileOperationStatus::Failed, std::string(operation) + " failed: " + transfer.detail);
+    if (transfer.failure == internal::FilesystemTransferFailure::Cancelled ||
+        transfer.failure == internal::FilesystemTransferFailure::MountedSource) {
+        return errorResult(FileOperationStatus::Failed, transfer.detail);
+    }
+    const auto reason = transfer.error ? transfer.error.message() : std::string{};
+    const auto detail = transfer.detail.empty() ? reason : transfer.detail + (reason.empty() ? "" : "\n" + reason);
+    return errorResult(FileOperationStatus::Failed, std::string(operation) + " failed: " + detail);
 }
 
 }  // namespace
@@ -236,14 +242,18 @@ FileOperationResult FileBrowserModel::ejectSelected()
     if (!entry || !entry->mountRoot) {
         return errorResult(FileOperationStatus::InvalidSelection, "Select a removable drive");
     }
+    const auto result = ejectDrive(entry->mountId);
+    refresh(true);
+    return result;
+}
+
+FileOperationResult FileBrowserModel::ejectDrive(uint64_t mountId, const internal::CommandOutput& progress)
+{
     for (const auto& volume : internal::removableVolumes()) {
-        if (volume.mount.id == entry->mountId) {
-            auto result = internal::ejectVolume(volume);
-            refresh(true);
-            return result;
+        if (volume.mount.id == mountId) {
+            return internal::ejectVolume(volume, progress);
         }
     }
-    refresh(true);
     return disconnected();
 }
 
@@ -494,12 +504,23 @@ FileOperationResult FileBrowserModel::moveEntryTo(const FileEntry& entry, const 
 FileOperationResult FileBrowserModel::transferEntry(const FileEntry& entry, const std::string& destinationDirectory,
                                                     bool move)
 {
+    const auto destinationMountId = destinationDirectory == _current_directory.get() ? _current_mount_id : 0;
+    const auto result = performTransfer(entry, destinationDirectory, destinationMountId, move);
+    if (result) {
+        refresh(false);
+        _status.set(result.message);
+    }
+    return result;
+}
+
+FileOperationResult FileBrowserModel::performTransfer(const FileEntry& entry, const std::string& destinationDirectory,
+                                                      uint64_t destinationMountId, bool move,
+                                                      internal::TransferControl* control)
+{
     if (entry.mountRoot || destinationDirectory.empty()) {
         return errorResult(FileOperationStatus::InvalidSelection, "Open a folder first");
     }
     const fs::path source(entry.path);
-    const std::string sourceName = entry.name;
-    uint64_t destinationMountId = destinationDirectory == _current_directory.get() ? _current_mount_id : 0;
     if (!destinationMountId) {
         for (const auto& volume : internal::removableVolumes()) {
             if (internal::volumeContains(volume, destinationDirectory)) {
@@ -516,9 +537,9 @@ FileOperationResult FileBrowserModel::transferEntry(const FileEntry& entry, cons
         return disconnected();
     }
     const auto pinnedSource = sourceDirectory.path() / source.filename();
-    const auto transfer = move ? internal::movePathToDirectory(pinnedSource, destination.path(), connected)
-                               : internal::copyPathToDirectory(pinnedSource, destination.path(), connected);
-    if (!connected() || transfer.failure == internal::FilesystemTransferFailure::DriveDisconnected) {
+    const auto transfer = move ? internal::movePathToDirectory(pinnedSource, destination.path(), connected, control)
+                               : internal::copyPathToDirectory(pinnedSource, destination.path(), connected, control);
+    if (transfer.failure == internal::FilesystemTransferFailure::DriveDisconnected || (!transfer && !connected())) {
         return disconnected();
     }
     if (transfer.failure == internal::FilesystemTransferFailure::SamePath) {
@@ -527,9 +548,7 @@ FileOperationResult FileBrowserModel::transferEntry(const FileEntry& entry, cons
     if (!transfer) {
         return transferError(move ? "Cut" : "Copy", transfer);
     }
-    refresh(false);
-    _status.set(std::string(move ? "Moved " : "Copied ") + sourceName);
-    return {};
+    return {FileOperationStatus::Ok, std::string(move ? "Moved " : "Copied ") + entry.name};
 }
 
 FileOperationResult FileBrowserModel::renameSelectedTo(const std::string& name)
@@ -592,19 +611,17 @@ FileOperationResult FileBrowserModel::deleteSelected()
     }
     const fs::path deletedPath = selected->path;
     const std::string deletedName = selected->name;
-    if (selected->directory) {
-        for (const auto& volume : internal::removableVolumes()) {
-            const auto relative = volume.mount.target.lexically_relative(deletedPath);
-            if (!relative.empty() && *relative.begin() != "..") {
-                return errorResult(FileOperationStatus::NotSupported, "Folder contains a mounted drive");
-            }
-        }
-    }
     const internal::TransferDirectory directory(deletedPath.parent_path(), selected->mountId);
     if (!directory.connected()) {
         return disconnected();
     }
     std::error_code ec;
+    if (internal::containsMountPoint(directory.path() / deletedPath.filename(), ec)) {
+        return errorResult(FileOperationStatus::NotSupported, "Folder contains a mounted filesystem");
+    }
+    if (ec) {
+        return filesystemError("Cannot check for mounted filesystems", ec);
+    }
     fs::remove_all(directory.path() / deletedPath.filename(), ec);
     if (ec) {
         return filesystemError("Delete", ec);

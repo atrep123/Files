@@ -1,13 +1,18 @@
 #include "models/debian_package.hpp"
+#include "models/debian_install.hpp"
 
 #include "models/removable_volumes.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
 #include <fcntl.h>
 #include <sstream>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/mman.h>
+#endif
 
 namespace files::internal {
 namespace fs = std::filesystem;
@@ -46,62 +51,82 @@ bool supportedArchitecture(const std::string& architecture)
     return false;
 }
 
-std::string stageFile(const fs::path& source, const fs::path& destination)
+#if defined(__linux__)
+struct Descriptor {
+    int fd;
+    ~Descriptor() { if (fd >= 0) close(fd); }
+};
+
+std::string writeBytes(int fd, const char* buffer, ssize_t count)
 {
-    const int input = open(source.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-    if (input < 0) {
-        return std::strerror(errno);
+    for (ssize_t written = 0; written < count;) {
+        const auto part = write(fd, buffer + written, static_cast<size_t>(count - written));
+        if (part < 0 && errno == EINTR) {
+            continue;
+        }
+        if (part <= 0) {
+            return part < 0 ? std::strerror(errno) : "Could not write package";
+        }
+        written += part;
+    }
+    return {};
+}
+
+std::string stageFile(const fs::path& source, const fs::path& destination, int reviewed)
+{
+    const Descriptor input{open(source.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW)};
+    if (input.fd < 0) {
+        return errno == ELOOP ? "Symbolic links to packages are not supported" : std::strerror(errno);
     }
     struct stat before{};
-    if (fstat(input, &before) != 0 || !S_ISREG(before.st_mode)) {
-        close(input);
+    if (fstat(input.fd, &before) != 0 || !S_ISREG(before.st_mode)) {
         return "Not a regular file";
     }
-    const int output = open(destination.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    if (output < 0) {
-        const int error = errno;
-        close(input);
-        return std::strerror(error);
+    Descriptor output{open(destination.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600)};
+    if (output.fd < 0) {
+        return std::strerror(errno);
     }
-
-    std::string error;
-    off_t copied = 0;
     char buffer[65536];
-    while (copied < before.st_size && error.empty()) {
-        const auto remaining = std::min<off_t>(sizeof(buffer), before.st_size - copied);
-        const ssize_t count = read(input, buffer, static_cast<size_t>(remaining));
+    off_t remaining = before.st_size;
+    while (remaining > 0) {
+        const auto count = read(input.fd, buffer, static_cast<size_t>(std::min<off_t>(remaining, sizeof(buffer))));
         if (count < 0 && errno == EINTR) {
             continue;
         }
         if (count <= 0) {
-            error = count < 0 ? std::strerror(errno) : "Package changed while reading";
-            break;
+            return count < 0 ? std::strerror(errno) : "Package changed while reading";
         }
-        for (ssize_t written = 0; written < count;) {
-            const ssize_t length = write(output, buffer + written, static_cast<size_t>(count - written));
-            if (length < 0 && errno == EINTR) {
-                continue;
-            }
-            if (length <= 0) {
-                error = length < 0 ? std::strerror(errno) : "Could not write package";
-                break;
-            }
-            written += length;
+        auto error = writeBytes(reviewed, buffer, count);
+        if (error.empty()) {
+            error = writeBytes(output.fd, buffer, count);
         }
-        copied += count;
+        if (!error.empty()) {
+            return error;
+        }
+        remaining -= count;
     }
     struct stat after{};
-    if (error.empty() && (fstat(input, &after) != 0 || after.st_size != before.st_size ||
-                          after.st_mtime != before.st_mtime || after.st_ctime != before.st_ctime)) {
-        error = "Package changed while reading";
+    if (fstat(input.fd, &after) != 0 || after.st_size != before.st_size ||
+        after.st_mtim.tv_sec != before.st_mtim.tv_sec || after.st_mtim.tv_nsec != before.st_mtim.tv_nsec ||
+        after.st_ctim.tv_sec != before.st_ctim.tv_sec || after.st_ctim.tv_nsec != before.st_ctim.tv_nsec) {
+        return "Package changed while reading";
     }
-    const int closed = close(output);
-    if (closed != 0 && error.empty()) {
-        error = std::strerror(errno);
+    const int closed = close(output.fd);
+    output.fd = -1;
+    if (closed != 0 || fcntl(reviewed, F_ADD_SEALS, F_SEAL_SEAL | F_SEAL_WRITE | F_SEAL_SHRINK | F_SEAL_GROW) != 0) {
+        return std::strerror(errno);
     }
-    close(input);
-    return error;
+    return {};
 }
+
+CommandResult readSnapshot(int fd, const std::vector<std::string>& command, bool stdoutOutput = true)
+{
+    if (lseek(fd, 0, SEEK_SET) < 0) {
+        return {-1, std::strerror(errno)};
+    }
+    return runCommand(command, {}, {}, stdoutOutput, fd);
+}
+#endif
 
 std::string debDetails(const DebMetadata& metadata)
 {
@@ -193,13 +218,17 @@ DebInspection inspectDeb(const fs::path& source, uint64_t mountId)
         return {nullptr, "Cannot prepare package: " + std::string(std::strerror(errno))};
     }
     auto package = std::make_unique<PreparedDeb>(temporary);
+    const Descriptor reviewed{memfd_create("files-reviewed-package", MFD_CLOEXEC | MFD_ALLOW_SEALING)};
+    if (reviewed.fd < 0) {
+        return {nullptr, "Cannot seal the package for review: " + std::string(std::strerror(errno))};
+    }
     {
         const auto parent = source.parent_path().empty() ? fs::path(".") : source.parent_path();
         const TransferDirectory directory(parent, mountId);
         if (!directory.connected()) {
             return {nullptr, "Drive disconnected"};
         }
-        const auto error = stageFile(directory.path() / source.filename(), package->path);
+        const auto error = stageFile(directory.path() / source.filename(), package->path, reviewed.fd);
         if (!directory.connected()) {
             return {nullptr, "Drive disconnected"};
         }
@@ -208,8 +237,8 @@ DebInspection inspectDeb(const fs::path& source, uint64_t mountId)
         }
     }
 
-    const auto info = runCommand({"/usr/bin/dpkg-deb", "-I", package->path.string()});
-    if (!info) {
+    const auto info = readSnapshot(reviewed.fd, {"/usr/bin/dpkg-deb", "-I", "-"});
+    if (!info || info.outputTruncated) {
         return {nullptr, "Invalid or unreadable Debian package\n\n" + cleanCommandText(info.output)};
     }
     package->metadata = parseDebInfo(cleanCommandText(info.output));
@@ -218,16 +247,34 @@ DebInspection inspectDeb(const fs::path& source, uint64_t mountId)
         metadata.architecture.empty() || metadata.description.empty()) {
         return {nullptr, "Invalid Debian package metadata"};
     }
-    const auto contents = runCommand({"/usr/bin/dpkg-deb", "--contents", package->path.string()}, {}, {}, false);
+    const auto contents = readSnapshot(reviewed.fd, {"/usr/bin/dpkg-deb", "--contents", "-"}, false);
     if (!contents) {
         return {nullptr, "Damaged Debian package\n\n" + cleanCommandText(contents.output)};
     }
     std::string details = debDetails(metadata);
-    const bool compatible = supportedArchitecture(metadata.architecture);
-    if (!compatible) {
-        details = "Unsupported architecture: " + metadata.architecture + "\n\n" + details;
+    if (!supportedArchitecture(metadata.architecture)) {
+        return {std::move(package), "Unsupported architecture: " + metadata.architecture + "\n\n" + details, false};
     }
-    return {std::move(package), std::move(details), compatible};
+    package->sha256 = sha256CommandOutput(readSnapshot(reviewed.fd, {"/usr/bin/sha256sum"}));
+    if (package->sha256.empty()) {
+        return {nullptr, "Cannot calculate the SHA-256 of the reviewed package"};
+    }
+
+    const auto simulated = runCommand(debAptCommand(package->path, true));
+    const auto plan = debAptPlan(simulated.output);
+    if (simulated && !simulated.outputTruncated && !plan.empty()) {
+        package->aptPlanSha256 = sha256CommandOutput(runCommand({"/usr/bin/sha256sum"}, {}, plan));
+    }
+    if (package->aptPlanSha256.empty()) {
+        package->planError = "Cannot verify the APT installation plan. Check dependencies and package manager state.\n\n" +
+                             cleanCommandText(simulated.output);
+        const auto error = package->planError;
+        return {std::move(package), details + "\n\n" + error, false};
+    }
+    details = "Installation can run package scripts as root.\n"
+              "Keep local configuration (dpkg --force-confdef --force-confold).\n\n" +
+              details + "\n\nAPT plan (simulation)\n" + cleanCommandText(plan);
+    return {std::move(package), std::move(details), true};
 #else
     (void)source;
     (void)mountId;
@@ -242,25 +289,19 @@ DebInstallResult installDeb(const PreparedDeb& package, std::string& password, c
         ~ClearPassword() { clearSecret(password); }
     } clear{password};
 
-    const std::vector<std::string> apt{"/usr/bin/apt-get", "-y", "--no-remove", "--no-install-recommends",
-                                       "-o", "APT::Status-Fd=1", "install", package.path.string()};
+#if defined(__linux__)
+    if (package.sha256.empty() || package.aptPlanSha256.empty()) {
+        return {DebInstallState::Failed, package.planError.empty() ? "Open the Debian package for review first."
+                                                                  : package.planError};
+    }
+    if (!trustedSystemExecutable(debHelperExecutable)) {
+        return {DebInstallState::Failed, "The installed Files package helper is missing or its path is writable."};
+    }
     const auto update = [&](const auto& message) {
         if (progress) {
             progress(message);
         }
     };
-    update("Checking package dependencies...\n");
-    auto simulation = apt;
-    simulation.insert(simulation.begin() + 1, "--simulate");
-    const auto plan = runCommand(simulation);
-    if (!plan) {
-        return commandFailure("Cannot install package. Check dependencies and package manager state.", plan);
-    }
-    const auto audit = runCommand({"/usr/bin/dpkg", "--audit"});
-    if (!audit || !trim(audit.output).empty()) {
-        return commandFailure("Package manager needs attention", audit);
-    }
-
     const bool suppliedPassword = !password.empty();
     if (suppliedPassword) {
         password += '\n';
@@ -276,39 +317,44 @@ DebInstallResult installDeb(const PreparedDeb& package, std::string& password, c
         }
     }
 
-    // Store uses dpkg when dependencies are already met, and apt-get to resolve them otherwise.
-    const auto& metadata = package.metadata;
-    std::string dependencies = metadata.preDepends;
-    if (!metadata.depends.empty()) {
-        dependencies += (dependencies.empty() ? "" : ", ") + metadata.depends;
-    }
-    const bool installedDependencies = dependencies.empty() ||
-        static_cast<bool>(runCommand({"/usr/bin/dpkg-checkbuilddeps", "-d", dependencies, "/dev/null"}));
-    const std::vector<std::string> dpkg{"/usr/bin/dpkg", "--install", package.path.string()};
-    const auto& command = installedDependencies ? dpkg : apt;
-    // Forward only the package command. Its stdin never receives the password.
     clearSecret(password);
-    std::vector<std::string> elevated{"/usr/bin/sudo", "-n", "--"};
-    elevated.insert(elevated.end(), command.begin(), command.end());
-    update("Installing " + metadata.name + "...\n");
-    const auto result = runCommand(elevated, progress);
+    const Descriptor input{open(package.path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW)};
+    struct stat info{};
+    if (input.fd < 0 || fstat(input.fd, &info) != 0 || !S_ISREG(info.st_mode)) {
+        return {DebInstallState::Failed, "The prepared package changed after review or cannot be opened. Open it again."};
+    }
+    std::string storeState;
+    if (const char* configured = std::getenv("M5APPSTORE_STATE_DIR"); configured && *configured) {
+        if (std::string(configured).rfind("~/", 0) == 0 && std::getenv("HOME")) {
+            storeState = (fs::path(std::getenv("HOME")) / (configured + 2)).string();
+        } else {
+            storeState = fs::absolute(configured).string();
+        }
+    }
+    const auto& metadata = package.metadata;
+    const std::vector<std::string> elevated{"/usr/bin/sudo", "-n", "--", debHelperExecutable, debHelperOption,
+                                            package.sha256, package.aptPlanSha256, metadata.name, metadata.version,
+                                            storeState};
+    const auto result = runCommand(elevated, progress, {}, true, input.fd);
     if (!result) {
-        // The password policy for sudo -v can differ from that for this command.
         const std::string output = trim(result.output);
         const std::string passwordRequired = "sudo: a password is required";
         if (!suppliedPassword && result.exitCode == 1 &&
             (output == passwordRequired || output.find("\n" + passwordRequired) != std::string::npos)) {
             return {DebInstallState::PasswordRequired, "System password required"};
         }
-        return commandFailure("Package installation failed", result);
-    }
-    const std::string queryName = metadata.architecture == "all" ? metadata.name
-                                                                : metadata.name + ":" + metadata.architecture;
-    const auto status = runCommand({"/usr/bin/dpkg-query", "-W", "-f=${Status}\n${Version}", "--", queryName});
-    if (!status || trim(status.output) != "install ok installed\n" + metadata.version) {
-        return commandFailure("Could not verify the installed package", status);
+        auto failure = commandFailure("Package installation failed", result);
+        if (result.output.find("dpkg --audit") == std::string::npos) {
+            failure.message += "\n\n" + debAuditMessage();
+        }
+        return failure;
     }
     return {DebInstallState::Installed, "Installed " + metadata.name + " " + metadata.version};
+#else
+    (void)package;
+    (void)progress;
+    return {DebInstallState::Failed, "Debian packages require a Debian-compatible Linux system"};
+#endif
 }
 
 }  // namespace files::internal

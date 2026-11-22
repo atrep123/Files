@@ -1320,6 +1320,12 @@ public:
             case PackageDialogMode::Password:
                 hint = "OK: Continue   ESC: Cancel";
                 break;
+            case PackageDialogMode::Installing:
+                hint = "Installation cannot be interrupted";
+                break;
+            case PackageDialogMode::Transferring:
+                hint = "ESC: Cancel while copying";
+                break;
             case PackageDialogMode::Result:
                 hint = "F/X: Scroll   ESC: Back";
                 break;

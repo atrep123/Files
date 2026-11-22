@@ -22,6 +22,9 @@ struct PreparedDeb {
     PreparedDeb& operator=(const PreparedDeb&) = delete;
     const std::filesystem::path path;
     DebMetadata metadata;
+    std::string sha256;
+    std::string aptPlanSha256;
+    std::string planError;
 };
 
 struct DebInspection {

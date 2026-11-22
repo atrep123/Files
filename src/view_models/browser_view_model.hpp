@@ -21,7 +21,7 @@ enum class BrowserAction {
     Eject,
 };
 
-enum class PackageDialogMode { Closed, Reading, Review, Password, Installing, Result };
+enum class PackageDialogMode { Closed, Reading, Review, Password, Installing, Transferring, Ejecting, Result };
 
 struct PackageDialog {
     PackageDialogMode mode = PackageDialogMode::Closed;
@@ -148,6 +148,10 @@ private:
     // The workers finish before the state they use is destroyed.
     std::future<internal::DebInspection> _package_read;
     std::future<internal::DebInstallResult> _package_install;
+    std::shared_ptr<internal::TransferControl> _transfer_control;
+    std::mutex _eject_mutex;
+    std::string _eject_progress;
+    std::future<FileOperationResult> _storage_operation;
     uint32_t _last_locations_check = 0;
     uint32_t _last_package_update = 0;
     smooth_ui_toolkit::SingleObservable<uint32_t> _magic{0};
@@ -160,6 +164,8 @@ private:
     void startPackageRead(const FileEntry& entry);
     void startPackageInstall();
     void tickPackage(uint32_t nowMs);
+    void startEject();
+    void tickStorage(uint32_t nowMs);
     void selectPreviousAction();
     void selectNextAction();
     void activateSelectedAction();

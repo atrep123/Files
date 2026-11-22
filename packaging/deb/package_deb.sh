@@ -99,7 +99,7 @@ Section: utils
 Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: ${MAINTAINER}
-Depends: libc6, libstdc++6, libgcc-s1, ffmpeg, dpkg, apt, sudo
+Depends: libc6, libstdc++6, libgcc-s1, ffmpeg, dpkg, dpkg-dev, apt, sudo
 Recommends: udisks2
 Installed-Size: ${INSTALLED_SIZE}
 Description: Files application for M5CardputerZero APPLaunch

@@ -227,6 +227,7 @@ if(BUILD_TESTING)
     add_executable(filesystem_transfer_tests
         tests/filesystem_transfer_test.cpp
         src/models/filesystem_transfer.cpp
+        src/models/mount_info.cpp
     )
     target_include_directories(filesystem_transfer_tests PRIVATE
         "${FILES_SRC_DIR}"
@@ -244,6 +245,7 @@ if(BUILD_TESTING)
         src/models/file_browser_model.cpp
         src/models/file_type_registry.cpp
         src/models/filesystem_transfer.cpp
+        src/models/mount_info.cpp
         src/models/removable_volumes.cpp
         src/models/command.cpp
     )
@@ -265,13 +267,22 @@ if(BUILD_TESTING)
             src/models/file_browser_model.cpp
             src/models/file_type_registry.cpp
             src/models/filesystem_transfer.cpp
+            src/models/mount_info.cpp
             src/models/removable_volumes.cpp
             src/models/debian_package.cpp
+            src/models/debian_install.cpp
             src/models/command.cpp
         )
         target_include_directories(storage_package_tests PRIVATE "${FILES_SRC_DIR}")
         target_link_libraries(storage_package_tests PRIVATE smooth_ui_toolkit spdlog::spdlog Threads::Threads)
         add_test(NAME storage_package COMMAND storage_package_tests)
+        get_target_property(STORAGE_TEST_SOURCES storage_package_tests SOURCES)
+        list(REMOVE_ITEM STORAGE_TEST_SOURCES tests/storage_package_test.cpp)
+        add_executable(files_hardening_probe tests/hardening_probe.cpp ${STORAGE_TEST_SOURCES})
+        target_include_directories(files_hardening_probe PRIVATE "${FILES_SRC_DIR}")
+        target_link_libraries(files_hardening_probe PRIVATE smooth_ui_toolkit spdlog::spdlog Threads::Threads)
+        target_link_options(files_hardening_probe PRIVATE -Wl,--wrap=fsync)
+        add_test(NAME storage_command_drain COMMAND files_hardening_probe pipe)
     endif()
 
     add_executable(jpeg_decoder_tests

@@ -12,15 +12,15 @@ loop_device=''
 cleanup() {
     if mountpoint -q -- "$mount_dir"; then umount -- "$mount_dir"; fi
     if [[ -n $loop_device ]]; then losetup --detach "$loop_device"; fi
-    rm -f -- "$tmp/drive.img" "$mount_dir/from-drive.txt"
+    rm -f -- "$tmp/drive.img" "$mount_dir/z disku č. 2.txt"
     rmdir -- "$mount_dir" "$tmp"
 }
 trap cleanup EXIT
 truncate -s 48M "$tmp/drive.img"
-mkfs.ext4 -q -F -L "Files USB" "$tmp/drive.img"
+mkfs.ext4 -q -F "$tmp/drive.img"
 loop_device=$(losetup --find --show "$tmp/drive.img")
 mount -o nosuid,nodev,noexec "$loop_device" "$mount_dir"
 "$1" "$mount_dir"
-rm -- "$mount_dir/from-drive.txt"
+rm -- "$mount_dir/z disku č. 2.txt"
 mount -o nosuid,nodev,noexec "$loop_device" "$mount_dir"
 "$1" "$mount_dir" --disconnect-during-copy

@@ -2,6 +2,7 @@
 
 #include "core/files_types.hpp"
 #include "models/file_type_registry.hpp"
+#include "models/filesystem_transfer.hpp"
 #include "models/removable_volumes.hpp"
 #include <filesystem>
 #include <tools/observable/single_observable.hpp>
@@ -41,6 +42,11 @@ public:
     void showLocations(bool rememberDirectory = true, const std::string& preferredPath = {});
     void refreshLocations();
     FileOperationResult ejectSelected();
+    static FileOperationResult ejectDrive(uint64_t mountId, const internal::CommandOutput& progress = {});
+    uint64_t currentMountId() const { return _current_mount_id; }
+    static FileOperationResult performTransfer(const FileEntry& entry, const std::string& destinationDirectory,
+                                               uint64_t destinationMountId, bool move,
+                                               internal::TransferControl* control = nullptr);
     void refresh(bool preserveSelected = true);
     void selectPrevious();
     void selectNext();

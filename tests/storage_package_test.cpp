@@ -45,7 +45,7 @@ struct TempDirectory {
 void testMountList(const fs::path& temp)
 {
     std::istringstream raw(R"(garbage
-61 40 8:1 / /media/pi/Winter\040USB rw,nosuid shared:22 - vfat /dev/sda1 rw
+61 40 8:1 / /media/pi/Žluté\040USB rw,nosuid shared:22 - vfat /dev/sda1 rw
 62 40 8:16 / /media/pi/Fixed rw - ext4 /dev/sdb rw
 63 40 8:32 / /mnt/LaptopSSD rw - ext4 /dev/sdc rw
 64 40 7:0 / /media/pi/Test rw - ext4 /dev/loop0 rw
@@ -57,7 +57,7 @@ void testMountList(const fs::path& temp)
 )");
     const auto mounts = readMountInfo(raw);
     check(mounts.size() == 8, "malformed mount rows must be ignored");
-    check(mounts.front().target == "/media/pi/Winter USB", "mount path with spaces was not decoded");
+    check(mounts.front().target == "/media/pi/Žluté USB", "mount path with spaces was not decoded");
     check(mounts[4].target == "/run/media/pi/SD\\Cards", "literal backslash was not decoded");
 
     const auto root = temp / "sys";
@@ -84,8 +84,8 @@ void testMountList(const fs::path& temp)
     const auto& usb = volumes.back();
     check(usb.mount.id == 61 && usb.mount.source == "/dev/sda1" && usb.disk == "/dev/sda" && usb.powerOff,
           "USB partition must map to the correct parent, including disks with RM=0");
-    check(volumeContains(usb, "/media/pi/Winter USB/folder/item"), "child was not recognized");
-    check(!volumeContains(usb, "/media/pi/Winter USB2/file"), "similar prefix matched another drive");
+    check(volumeContains(usb, "/media/pi/Žluté USB/folder/item"), "child was not recognized");
+    check(!volumeContains(usb, "/media/pi/Žluté USB2/file"), "similar prefix matched another drive");
     check(!volumes[1].powerOff && !volumes[2].powerOff, "SD and loop devices should only be unmounted");
 }
 
@@ -103,7 +103,7 @@ fs::path buildDeb(const fs::path& base, const std::string& arch, const std::stri
     }
     control << "Description: Files test package\n extra text\n .\n after a blank line\n";
     control.close();
-    const auto deb = base.string() + " ; test.deb";
+    const auto deb = base.string() + " ; zkouška.deb";
     const auto build = runCommand({"/usr/bin/dpkg-deb", "--build", "--root-owner-group", base.string(), deb});
     check(static_cast<bool>(build), build.output.c_str());
     return deb;
@@ -159,7 +159,8 @@ void testDeb(const fs::path& temp)
 
     const auto unsatisfied = buildDeb(temp / "dependencies", "all", "cz-files-nonexistent-dependency (= 99999999)");
     const auto missing = inspectDeb(unsatisfied);
-    check(missing.installable && missing.package, missing.text.c_str());
+    check(!missing.installable && missing.package &&
+              missing.text.find("cz-files-nonexistent-dependency") != std::string::npos, missing.text.c_str());
     std::string emptyPassword;
     bool attemptedAuth = false;
     const auto rejected = installDeb(*missing.package, emptyPassword, [&](const auto& message) {
@@ -216,10 +217,10 @@ void testDisconnectDuringCopy(const fs::path& mount, const fs::path& temp)
 void testLoop(const fs::path& mount, const fs::path& temp)
 {
     FileBrowserModel browser(temp.string());
-    std::ofstream(temp / "to-drive.txt") << "written from local storage\n";
-    std::ofstream(mount / "from-drive.txt") << "written from mounted image\n";
+    std::ofstream(temp / "na disk č. 1.txt") << "written from local storage\n";
+    std::ofstream(mount / "z disku č. 2.txt") << "written from mounted image\n";
     browser.refresh();
-    selectByName(browser, "to-drive.txt");
+    selectByName(browser, "na disk č. 1.txt");
     const FileEntry local = *browser.selectedEntry();
     browser.showLocations();
     selectByName(browser, mount.filename().string());
@@ -228,8 +229,8 @@ void testLoop(const fs::path& mount, const fs::path& temp)
     check(!browser.deleteSelected() && !browser.renameSelectedTo("renamed"), "mounted root can be modified");
     check(static_cast<bool>(browser.openSelected()), "could not open mounted volume");
     auto copied = browser.copyEntryTo(local, mount.string());
-    check(static_cast<bool>(copied) && fs::exists(mount / "to-drive.txt"), copied.message.c_str());
-    selectByName(browser, "from-drive.txt");
+    check(static_cast<bool>(copied) && fs::exists(mount / "na disk č. 1.txt"), copied.message.c_str());
+    selectByName(browser, "z disku č. 2.txt");
     const FileEntry remote = *browser.selectedEntry();
     check(remote.mountId == root.mountId && !remote.mountRoot, "file should retain removable mount identity");
     check(static_cast<bool>(browser.goBack()) && browser.inLocations(), "drive Escape must return to locations");
@@ -238,14 +239,14 @@ void testLoop(const fs::path& mount, const fs::path& temp)
     check(static_cast<bool>(browser.goBack()) && browser.currentDirectory().get() == temp.string(),
           "locations Escape must return to the folder");
     copied = browser.copyEntryTo(remote, temp.string());
-    check(static_cast<bool>(copied) && fs::exists(temp / "from-drive.txt"), copied.message.c_str());
+    check(static_cast<bool>(copied) && fs::exists(temp / "z disku č. 2.txt"), copied.message.c_str());
 
     // The caller owns the temporary loop mount, allowing an actual dismount after Files releases its descriptors.
     const auto detached = runCommand({"/usr/bin/umount", mount.string()});
     check(static_cast<bool>(detached), detached.output.c_str());
-    std::ofstream(mount / "from-drive.txt") << "underlying path; must not be copied\n";
+    std::ofstream(mount / "z disku č. 2.txt") << "underlying path; must not be copied\n";
     const auto lost = browser.copyEntryTo(remote, temp.string());
-    check(!lost && lost.message == "Drive disconnected" && !fs::exists(temp / "from-drive copy.txt"),
+    check(!lost && lost.message == "Drive disconnected" && !fs::exists(temp / "z disku č. 2 copy.txt"),
           "a disconnected mount must never fall through to the underlying filesystem");
     std::cout << "Loop image visible, copy in both directions, unmount and stale clipboard verified\n";
 }

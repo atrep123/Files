@@ -1,18 +1,11 @@
 #pragma once
 
 #include "core/files_types.hpp"
+#include "models/command.hpp"
 #include <filesystem>
-#include <istream>
+#include "models/mount_info.hpp"
 
 namespace files::internal {
-
-struct MountRecord {
-    uint64_t id;
-    std::string deviceNumber;
-    std::filesystem::path root;
-    std::filesystem::path target;
-    std::filesystem::path source;
-};
 
 struct RemovableVolume {
     MountRecord mount;
@@ -21,7 +14,6 @@ struct RemovableVolume {
     bool powerOff = false;
 };
 
-std::vector<MountRecord> readMountInfo(std::istream& input);
 std::vector<RemovableVolume> removableVolumes(const std::vector<MountRecord>& mounts,
                                              const std::filesystem::path& mediaDirectory,
                                              const std::filesystem::path& sysfs);
@@ -44,6 +36,6 @@ private:
     uint64_t _mountId;
     std::filesystem::path _path;
 };
-FileOperationResult ejectVolume(const RemovableVolume& volume);
+FileOperationResult ejectVolume(const RemovableVolume& volume, const CommandOutput& progress = {});
 
 }  // namespace files::internal
