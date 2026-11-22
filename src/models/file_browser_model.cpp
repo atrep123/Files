@@ -343,6 +343,29 @@ FileOperationResult FileBrowserModel::readDirectoryEntries(const std::string& di
     fs::directory_iterator item(directory, ec);
     while (!ec && item != end) {
         auto entry = makeEntry(*item, false);
+        std::error_code typeError;
+        const auto type = item->status(typeError);
+        entry.special = !typeError && type.type() != fs::file_type::regular &&
+                        type.type() != fs::file_type::directory;
+        constexpr std::string_view stagePrefix = ".files-transfer-v2-";
+        if (entry.directory && entry.name.compare(0, stagePrefix.size(), stagePrefix) == 0 &&
+            !fs::is_symlink(item->symlink_status(typeError))) {
+            const std::string_view suffix = std::string_view(entry.name).substr(stagePrefix.size());
+            size_t fields = 0;
+            size_t digits = 0;
+            for (char character : suffix) {
+                if (character >= '0' && character <= '9') {
+                    ++digits;
+                } else if (character == '-' && digits) {
+                    ++fields;
+                    digits = 0;
+                } else {
+                    fields = 3;
+                    break;
+                }
+            }
+            entry.incompleteCopy = fields == 2 && digits != 0;
+        }
         for (const auto& volume : volumes) {
             if (internal::volumeContains(volume, entry.path)) {
                 entry.mountId = volume.mount.id;
@@ -467,7 +490,16 @@ FileOperationResult FileBrowserModel::openSelected(FileEntry* openedFile)
         // Keep the spelling used by the directory entry in history.  A
         // symlinked directory is canonicalized for browsing, but returning
         // should still highlight that exact entry in the parent directory.
-        return goToDirectory(selected->path, true, selected->path);
+        const auto path = selected->path;
+        auto result = goToDirectory(path, true, path);
+        if (!result) {
+            std::error_code error;
+            if (fs::exists(path, error) && !fs::is_directory(path, error) && !error) {
+                result.message = "Item is no longer a folder";
+            }
+            refreshSelecting(path);
+        }
+        return result;
     }
 
     if (openedFile) {
@@ -529,7 +561,7 @@ FileOperationResult FileBrowserModel::goToDirectory(const std::string& path, boo
     const std::string targetPath = pathString(ec ? requestedPath : target);
     ec.clear();
     if (!fs::is_directory(targetPath, ec)) {
-        if (ec) {
+        if (ec && ec != std::errc::no_such_file_or_directory) {
             return filesystemError("Open", ec);
         }
         return errorResult(FileOperationStatus::NotFound, "Folder not found");
@@ -628,6 +660,15 @@ FileTransferResult FileBrowserModel::performTransfer(const FileEntry& entry, con
     const auto pinnedSource = sourceDirectory.path() / source.filename();
     const auto transfer = move ? internal::movePathToDirectory(pinnedSource, destination.path(), connected, control)
                                : internal::copyPathToDirectory(pinnedSource, destination.path(), connected, control);
+    result.destinationState = transfer.destinationState;
+    if (!transfer) {
+        if (!transfer.destination.empty()) {
+            result.destinationPath = pathString(fs::path(destinationDirectory) / transfer.destination.filename());
+        }
+        std::error_code sourceError;
+        result.sourceStillPresent = sourceDirectory.connected() &&
+            fs::exists(fs::symlink_status(pinnedSource, sourceError));
+    }
     if (!transfer && !connected()) {
         result.operation = disconnected();
         result.destinationState = transfer.failure == internal::FilesystemTransferFailure::SourceCleanupFailed
@@ -731,8 +772,10 @@ FileOperationResult FileBrowserModel::deleteSelected()
         return disconnected();
     }
     std::error_code ec;
-    if (internal::containsMountPoint(directory.path() / deletedPath.filename(), ec)) {
-        return errorResult(FileOperationStatus::NotSupported, "Folder contains a mounted filesystem");
+    fs::path mounted;
+    if (internal::containsMountPoint(directory.path() / deletedPath.filename(), ec, &mounted)) {
+        return errorResult(FileOperationStatus::NotSupported,
+                           "Folder contains a mounted filesystem\n" + mounted.string());
     }
     if (ec) {
         return filesystemError("Cannot check for mounted filesystems", ec);
@@ -742,7 +785,12 @@ FileOperationResult FileBrowserModel::deleteSelected()
         return filesystemError("Delete", ec);
     }
 
-    refresh(false);
+    const auto& before = _entries.get();
+    const size_t index = static_cast<size_t>(_selected_index.get());
+    std::string neighbor;
+    if (index + 1 < before.size()) neighbor = before[index + 1].path;
+    else if (index > 0) neighbor = before[index - 1].path;
+    refreshSelecting(neighbor);
     _status.set("Deleted " + deletedName);
     return FileOperationResult{};
 }

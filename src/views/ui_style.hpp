@@ -46,6 +46,20 @@ inline void hidden(lv_obj_t* obj, bool hide)
     else lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
 }
 
+inline void errorCross(lv_obj_t* parent, int x, int y)
+{
+    auto* icon = box(parent, x, y, 10, 10, black);
+    static constexpr lv_point_precise_t forward[] = {{1, 1}, {8, 8}};
+    static constexpr lv_point_precise_t reverse[] = {{1, 8}, {8, 1}};
+    for (const auto* points : {forward, reverse}) {
+        auto* stroke = lv_line_create(icon);
+        lv_obj_set_size(stroke, 10, 10);
+        lv_line_set_points(stroke, points, 2);
+        lv_obj_set_style_line_width(stroke, 2, 0);
+        lv_obj_set_style_line_color(stroke, lv_color_hex(error), 0);
+    }
+}
+
 inline void line(lv_obj_t* label, const std::string& text, int width, const lv_font_t* font,
                  size_t limit = std::string::npos, bool extension = false)
 {

@@ -579,7 +579,9 @@ void FilesApp::updateVolumeNoticeVisibility()
                          (_help_active || _router.page() == PageId::Preview) && !hostRenderingSuspended();
     if (showUsb) {
         const auto* preview = _model.preview().page().get();
-        const auto* hint = !_help_active && preview && preview->usesWideFooter() ? "U USB" :
+        const auto* hint = !_help_active && preview && preview->usesWideFooter()
+            ? (_browser_vm.hasMultipleRemovableVolumes() ? local("U Drives", "U Disky") :
+                                                           local("U Open", "U Otevřít")) :
             _browser_vm.hasMultipleRemovableVolumes() ? local("U Choose USB", "U Vybrat USB") :
                                                         local("U Open USB", "U Otevřít USB");
         const int width = textWidth(hint, uiFont12());

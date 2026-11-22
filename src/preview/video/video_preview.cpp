@@ -36,18 +36,12 @@ bool extensionUsuallyVideo(const std::string& extension)
     return std::find(std::begin(kVideoExtensions), std::end(kVideoExtensions), extension) != std::end(kVideoExtensions);
 }
 
-#if FILES_USE_SDL
 constexpr int kVideoWidth = 316;
 constexpr int kVideoHeight = 130;
+constexpr int kFrameRate = 25;
 constexpr const char* kVideoFilter =
     "scale=316:130:force_original_aspect_ratio=decrease,"
-    "pad=316:130:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=25,format=rgb565le";
-#else
-constexpr const char* kVideoFilter =
-    "scale=320:170:force_original_aspect_ratio=decrease,"
-    "pad=320:170:(ow-iw)/2:(oh-ih)/2:black,"
-    "setsar=1,fps=25,setpts=N/(25*TB),format=rgb565le";
-#endif
+    "pad=316:130:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=25:start_time=0,format=rgb565le";
 constexpr uint32_t kSeekStepMs = 10000;
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -134,11 +128,12 @@ std::string secondsArg(uint64_t offset_ms)
     return buffer;
 }
 
-void execFfmpeg(const std::string& path, uint64_t offset_ms, bool has_audio, const std::string& pulse_sink)
+void execFfmpeg(const std::string& path, uint64_t offset_ms, bool has_audio, const std::string& pulse_sink, bool still)
 {
     std::vector<std::string> args = {
-        "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin", "-re", "-fflags", "+genpts",
+        "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin", "-fflags", "+genpts",
     };
+    if (!still) args.emplace_back("-re");
     std::string seek_arg;
     if (offset_ms > 0) {
         seek_arg = secondsArg(offset_ms);
@@ -153,16 +148,10 @@ void execFfmpeg(const std::string& path, uint64_t offset_ms, bool has_audio, con
                                 "-vf",
                                 kVideoFilter,
                                 "-an",
-                                "-f",
-#if FILES_USE_SDL
-                                "rawvideo",
-                                "-threads:v", "1", "pipe:1",
-#else
-                                "fbdev",
-                                "/dev/fb0",
-#endif
                             });
-    if (has_audio) {
+    if (still) args.insert(args.end(), {"-frames:v", "1"});
+    args.insert(args.end(), {"-f", "rawvideo", "-threads:v", "1", "pipe:1"});
+    if (has_audio && !still) {
         args.insert(args.end(), {
                                     "-map",
                                     "0:a:0?",
@@ -214,7 +203,6 @@ public:
         _state = ui::label(header, 178, 2, 134, uiFont12());
         lv_obj_set_style_text_align(_state, LV_TEXT_ALIGN_RIGHT, 0);
         ui::hidden(_state, true);
-#if FILES_USE_SDL
         _image = lv_image_create(_root);
         lv_obj_set_pos(_image, 2, 20);
         _frame.header.magic = LV_IMAGE_HEADER_MAGIC;
@@ -226,11 +214,10 @@ public:
         _frame.data = _pixels.data();
         lv_image_set_src(_image, &_frame);
         ui::hidden(_image, true);
-#endif
-        _status = ui::label(_root, 8, 72, 304, uiFont14());
+        _status = ui::label(_root, 8, 76, 304, uiFont14());
         lv_obj_set_style_text_align(_status, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text(_status, local("Opening video…", "Otevírám video…"));
-        _detail = ui::label(_root, 8, 94, 304, uiFont12());
+        _detail = ui::label(_root, 8, 86, 304, uiFont12());
         lv_obj_set_style_text_align(_detail, LV_TEXT_ALIGN_CENTER, 0);
         ui::hidden(_detail, true);
         _keys = lv_obj_get_child(ui::caption(_root, 150, ""), 0);
@@ -253,9 +240,7 @@ public:
             router.back();
             return;
         }
-#if FILES_USE_SDL
-        if (!_frame_ready) return;
-#endif
+        if (!_frame_ready || _still_pending) return;
         if (key == ' ') {
             togglePause();
             refreshKeys();
@@ -275,24 +260,13 @@ public:
     void tick(uint32_t nowMs) override
     {
         (void)nowMs;
-#if FILES_USE_SDL
         readFrame();
-#endif
         pollPlayer();
     }
 
     bool shouldClose() const override
     {
         return _finished;
-    }
-
-    bool suspendsHostRendering() const override
-    {
-#if FILES_USE_SDL
-        return false;
-#else
-        return _started && !_finished && !_failed;
-#endif
     }
 
 private:
@@ -309,7 +283,6 @@ private:
     lv_obj_t* _state = nullptr;
     lv_obj_t* _detail = nullptr;
 
-#if FILES_USE_SDL
     lv_obj_t* _image = nullptr;
     lv_image_dsc_t _frame{};
     std::array<uint8_t, kVideoWidth * kVideoHeight * 2> _pixels{};
@@ -317,6 +290,10 @@ private:
     size_t _received = 0;
     int _pipe = -1;
     bool _frame_ready = false;
+    bool _still_pending = false;
+    uint64_t _segment_frames = 0;
+    uint64_t _displayed_ms = 0;
+    uint64_t _seek_offset_ms = 0;
 
     void readFrame()
     {
@@ -328,11 +305,13 @@ private:
         }
         _received = 0;
         _pixels = _buffer;
+        _displayed_ms = _seek_offset_ms + (1000 * _segment_frames++) / kFrameRate;
         ui::hidden(_image, false);
         ui::hidden(_status, true);
         lv_obj_invalidate(_image);
-        if (!_frame_ready) {
+        if (!_frame_ready || _still_pending) {
             _frame_ready = true;
+            _still_pending = false;
             refreshKeys();
         }
     }
@@ -343,19 +322,16 @@ private:
         _pipe = -1;
         _received = 0;
     }
-#endif
 
     void refreshKeys()
     {
         bool ready = !_failed && !_finished;
-#if FILES_USE_SDL
         ready = ready && _frame_ready;
-#endif
         const bool paused = ready && _paused;
         ui::hidden(_state, !paused);
         int titleWidth = 304;
         if (paused) {
-            const auto seconds = _seek_offset_ms / 1000;
+            const auto seconds = _displayed_ms / 1000;
             const auto secondPart = seconds % 60;
             const auto status = std::string(local("Ⅱ Paused  ", "Ⅱ Pauza  ")) +
                 std::to_string(seconds / 60) + ":" + (secondPart < 10 ? "0" : "") + std::to_string(secondPart);
@@ -375,10 +351,14 @@ private:
     {
         _failed = true;
         _finished = false;
-#if FILES_USE_SDL
         ui::hidden(_image, true);
-#endif
-        lv_label_set_text(_status, local("× Cannot play video", "× Video nelze přehrát"));
+        const auto* title = local("Cannot play video", "Video nelze přehrát");
+        const int width = textWidth(title, uiFont14());
+        const int x = (320 - width - 14) / 2;
+        lv_obj_set_pos(_status, x + 14, 65);
+        lv_obj_set_width(_status, width + 1);
+        lv_label_set_text(_status, title);
+        ui::errorCross(_root, x, 69);
         lv_label_set_text(_detail, local("Decoding failed.", "Chyba dekódování."));
         ui::hidden(_detail, false);
         lv_obj_set_style_text_color(_status, lv_color_hex(ui::error), 0);
@@ -391,9 +371,6 @@ private:
     bool _audio_checked = false;
     bool _has_audio     = false;
     std::string _pulse_sink;
-    uint64_t _seek_offset_ms        = 0;
-    uint32_t _segment_started_at_ms = 0;
-    uint32_t _paused_at_ms          = 0;
 #endif
 
     void startPlayer()
@@ -411,7 +388,7 @@ private:
 #endif
     }
 
-    void launchPlayer()
+    void launchPlayer(bool still = false)
     {
 #if defined(__unix__) || defined(__APPLE__)
         if (!_audio_checked) {
@@ -420,12 +397,15 @@ private:
             _audio_checked = true;
         }
 
-#if FILES_USE_SDL
         int frames[2];
         if (::pipe(frames) != 0) {
             showFailure();
             return;
         }
+#ifdef F_SETPIPE_SZ
+        // A full frame in the pipe lets the UI keep pace without waiting on decode.
+        (void)::fcntl(frames[0], F_SETPIPE_SZ, static_cast<int>(_buffer.size()));
+#endif
         const int flags = ::fcntl(frames[0], F_GETFL);
         if (flags < 0 || ::fcntl(frames[0], F_SETFL, flags | O_NONBLOCK) < 0) {
             ::close(frames[0]);
@@ -433,34 +413,28 @@ private:
             showFailure();
             return;
         }
-#endif
         _player_pid = ::fork();
         if (_player_pid < 0) {
             spdlog::error("VideoPreview: failed to fork ffmpeg for {}: {}", _file.path, std::strerror(errno));
-#if FILES_USE_SDL
             ::close(frames[0]);
             ::close(frames[1]);
-#endif
             showFailure();
             return;
         }
 
         if (_player_pid == 0) {
-#if FILES_USE_SDL
             ::close(frames[0]);
             if (::dup2(frames[1], STDOUT_FILENO) < 0) _exit(127);
             ::close(frames[1]);
-#endif
-            execFfmpeg(_file.path, _seek_offset_ms, _has_audio, _pulse_sink);
+            execFfmpeg(_file.path, _seek_offset_ms, _has_audio, _pulse_sink, still);
             _exit(127);
         }
 
-#if FILES_USE_SDL
         ::close(frames[1]);
         _pipe = frames[0];
-#endif
-        _paused                = false;
-        _segment_started_at_ms = lv_tick_get();
+        _paused = still;
+        _still_pending = still;
+        _segment_frames = 0;
         spdlog::info("VideoPreview: started ffmpeg pid={} audio={} pulse={} offsetMs={} path={}",
                      static_cast<int>(_player_pid), _has_audio, _has_audio ? _pulse_sink : "none", _seek_offset_ms,
                      _file.path);
@@ -469,9 +443,7 @@ private:
 
     void stopPlayer()
     {
-#if FILES_USE_SDL
         closePipe();
-#endif
 #if defined(__unix__) || defined(__APPLE__)
         if (_player_pid <= 0) {
             return;
@@ -511,33 +483,21 @@ private:
         if (result == _player_pid) {
             spdlog::info("VideoPreview: ffmpeg exited path={}", _file.path);
             _player_pid = -1;
-#if FILES_USE_SDL
             closePipe();
-#endif
-            if (WIFEXITED(status) && WEXITSTATUS(status) == 0) _finished = true;
+            if (_paused) {
+                // An out-of-range seek emits no frame. Leave the last displayed
+                // image and its timestamp available for seeking back or resuming.
+                _still_pending = false;
+                _seek_offset_ms = _displayed_ms;
+                if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) showFailure();
+            } else if (WIFEXITED(status) && WEXITSTATUS(status) == 0) _finished = true;
             else showFailure();
         } else if (result < 0 && errno != EINTR) {
             spdlog::warn("VideoPreview: waitpid failed for ffmpeg: {}", std::strerror(errno));
             _player_pid = -1;
-#if FILES_USE_SDL
             closePipe();
-#endif
             showFailure();
         }
-#endif
-    }
-
-    uint64_t currentPlaybackMs(uint32_t now_ms) const
-    {
-#if defined(__unix__) || defined(__APPLE__)
-        if (_paused && _player_pid <= 0) {
-            return _seek_offset_ms;
-        }
-        const uint32_t effective_now = _paused ? _paused_at_ms : now_ms;
-        return _seek_offset_ms + static_cast<uint32_t>(effective_now - _segment_started_at_ms);
-#else
-        (void)now_ms;
-        return 0;
 #endif
     }
 
@@ -558,7 +518,7 @@ private:
         if (_player_pid <= 0) {
             return;
         }
-        _seek_offset_ms = currentPlaybackMs(lv_tick_get());
+        _seek_offset_ms = _displayed_ms;
         stopPlayer();
         _paused = true;
         spdlog::info("VideoPreview: paused ffmpeg offsetMs={}", _seek_offset_ms);
@@ -572,20 +532,16 @@ private:
             return;
         }
 
-        const uint64_t current_ms = currentPlaybackMs(lv_tick_get());
+        const uint64_t current_ms = _displayed_ms;
         if (delta_ms < 0 && current_ms < static_cast<uint64_t>(-delta_ms)) {
             _seek_offset_ms = 0;
         } else {
             _seek_offset_ms = static_cast<uint64_t>(static_cast<int64_t>(current_ms) + delta_ms);
         }
 
-        if (_paused) {
-            spdlog::info("VideoPreview: seek paused ffmpeg offsetMs={}", _seek_offset_ms);
-            return;
-        }
-
+        const bool paused = _paused;
         stopPlayer();
-        launchPlayer();
+        launchPlayer(paused);
 #endif
     }
 };

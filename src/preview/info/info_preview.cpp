@@ -53,11 +53,7 @@ public:
         lv_obj_add_flag(_body, layout_audit::viewport_flag);
 #endif
         lv_obj_set_scroll_dir(_body, LV_DIR_VER);
-        lv_obj_set_scrollbar_mode(_body, LV_SCROLLBAR_MODE_AUTO);
-        lv_obj_set_style_pad_right(_body, 2, LV_PART_SCROLLBAR);
-        lv_obj_set_style_width(_body, 3, LV_PART_SCROLLBAR);
-        lv_obj_set_style_bg_color(_body, lv_color_hex(ui::secondary), LV_PART_SCROLLBAR);
-        lv_obj_set_style_bg_opa(_body, LV_OPA_COVER, LV_PART_SCROLLBAR);
+        lv_obj_set_scrollbar_mode(_body, LV_SCROLLBAR_MODE_OFF);
 
         auto* name = ui::label(_body, 8, 0, 300, uiFont14());
         lv_obj_set_style_text_line_space(name, 17 - lv_font_get_line_height(uiFont14()), 0);
@@ -76,21 +72,7 @@ public:
         lv_obj_set_style_text_line_space(values, 17 - lv_font_get_line_height(uiMonoFont12()), 0);
         auto* path = ui::label(_body, 80, y + 68, 228, uiMonoFont12(), ui::secondary);
         lv_obj_set_style_text_line_space(path, 17 - lv_font_get_line_height(uiMonoFont12()), 0);
-        std::string wrapped;
-        std::string current;
-        size_t start = 0;
-        while (start < _file.path.size()) {
-            const auto slash = _file.path.find('/', start);
-            const auto end = slash == std::string::npos ? _file.path.size() : slash + 1;
-            const auto component = _file.path.substr(start, end - start);
-            if (!current.empty() && textWidth(current + component, uiMonoFont12()) > 228) {
-                wrapped += current + "\n";
-                current.clear();
-            }
-            current += component;
-            start = end;
-        }
-        wrapped += current;
+        const auto wrapped = wrapPath(_file.path, 228, uiMonoFont12());
         lv_label_set_text(path, wrapped.c_str());
         // Pad the scroll extent to the same grid as the visible rows.
         lv_obj_set_height(_body, 119);
@@ -99,14 +81,18 @@ public:
         auto* extent = ui::box(_body, 0, (bottom + 16) / 17 * 17 - 1, 1, 1, ui::black);
         lv_obj_set_style_bg_opa(extent, LV_OPA_TRANSP, 0);
         lv_obj_update_layout(_body);
+        _thumb = ui::box(_root, 315, 20, 3, 12, ui::secondary);
+        updateThumb();
         ui::caption(_root, 150, keyHints({lv_obj_get_scroll_bottom(_body) > 0 ? "F↑ X↓" : "",
                                          local("Esc Back", "Esc Zpět")}, {}));
     }
 
+    void tick(uint32_t) override { updateThumb(); }
+
     void detach() override
     {
         if (_root) lv_obj_delete(_root);
-        _root = _body = nullptr;
+        _root = _body = _thumb = nullptr;
     }
 
     void onKey(uint32_t key, FilesRouter& router) override
@@ -127,6 +113,19 @@ private:
     std::string _title;
     lv_obj_t* _root = nullptr;
     lv_obj_t* _body = nullptr;
+    lv_obj_t* _thumb = nullptr;
+
+    void updateThumb()
+    {
+        const int top = lv_obj_get_scroll_top(_body);
+        const int range = top + lv_obj_get_scroll_bottom(_body);
+        ui::hidden(_thumb, range <= 0);
+        if (range <= 0) return;
+        constexpr int track = 130;
+        const int height = std::max(12, track * 119 / (119 + range));
+        lv_obj_set_height(_thumb, height);
+        lv_obj_set_y(_thumb, 20 + (track - height) * top / range);
+    }
 };
 
 class InfoPreviewSupport : public PreviewSupport {

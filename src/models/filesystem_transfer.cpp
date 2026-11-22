@@ -656,7 +656,7 @@ fs::path createStageDirectory(const fs::path& destinationParent, std::error_code
     for (int attempt = 0; attempt < kMaxStageCreationAttempts; ++attempt) {
         const uint64_t serial = g_stage_serial.fetch_add(1, std::memory_order_relaxed);
         const fs::path candidate =
-            destinationParent / (".files-transfer-" + std::to_string(static_cast<long long>(::getpid())) + "-" +
+            destinationParent / (".files-transfer-v2-" + std::to_string(static_cast<long long>(::getpid())) + "-" +
                                  std::to_string(timestamp) + "-" + std::to_string(serial));
         if (::mkdir(candidate.c_str(), S_IRWXU) == 0) {
             error.clear();
@@ -892,7 +892,7 @@ FilesystemTransferResult stagedCopyNoReplace(const fs::path& source, const fs::p
                              "cannot create a private staging directory");
     }
 
-    const fs::path stagedPayload = stageDirectory / "payload";
+    const fs::path stagedPayload = stageDirectory / source.filename();
     const auto discardStage = [&](FilesystemTransferResult result) {
         std::error_code error;
         const bool hadPayload = fs::exists(fs::symlink_status(stagedPayload, error));

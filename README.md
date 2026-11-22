@@ -11,7 +11,7 @@ File browser and preview app for M5Stack CardputerZero.
 - Preview text files with CJK-capable Noto Sans fonts and scroll progress
 - Preview images with pan, zoom, counter-clockwise rotation, fullscreen, and GIF support
 - Play audio files with seek and 1x/2x/5x speed controls
-- Play video files fullscreen through `ffmpeg` on the device framebuffer
+- Play video files with `ffmpeg` in the LVGL preview, with pause and seek controls
 - Fall back to an info preview for unsupported file types
 
 ## Dependencies
@@ -155,8 +155,10 @@ its recovery record and protected archive. Review the output of `dpkg --audit` a
 before retrying. An administrator can remove the reported staging directory
 after resolving the package state.
 
-Video preview uses `ffmpeg` directly on CardputerZero. Audio is sent to the
-PulseAudio sink named by `FILES_VIDEO_PULSE_SINK`, or to `default` when unset.
+Video preview decodes RGB565 frames through `ffmpeg` on CardputerZero and
+displays them in LVGL. The paused clock follows the last displayed frame.
+Audio is sent to the PulseAudio sink named by `FILES_VIDEO_PULSE_SINK`, or to
+`default` when unset.
 
 Keyboard input debug logs can be enabled with:
 

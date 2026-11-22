@@ -19,7 +19,6 @@ public:
 
     void attach(lv_obj_t* parent);
     void detach();
-    void tick(uint32_t nowMs);
 
 private:
     class WaveformView;
@@ -37,6 +36,9 @@ private:
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _elapsed_label;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _remaining_label;
     std::unique_ptr<BottomKeyBar> _key_bar;
+
+    bool _canRewind = false;
+    bool _canAdvance = false;
 
     void renderState(AudioPlaybackState state);
     void renderFile(const AudioPreviewFile& file);

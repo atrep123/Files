@@ -59,6 +59,8 @@ struct FileEntry {
     bool writable           = true;
     uint64_t mountId        = 0;
     bool mountRoot          = false;
+    bool incompleteCopy     = false;
+    bool special            = false;
     std::optional<uint64_t> freeBytes;
 };
 

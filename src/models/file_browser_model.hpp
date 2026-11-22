@@ -23,6 +23,7 @@ struct FileTransferResult {
     internal::TransferDestination destinationState = internal::TransferDestination::NotPublished;
     uint64_t disconnectedSource = 0;
     uint64_t disconnectedDestination = 0;
+    bool sourceStillPresent = false;
 };
 
 class FileBrowserModel {

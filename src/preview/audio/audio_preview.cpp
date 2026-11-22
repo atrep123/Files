@@ -65,9 +65,6 @@ public:
         if (_view_model) {
             _view_model->tick(nowMs);
         }
-        if (_view) {
-            _view->tick(nowMs);
-        }
     }
 
 private:

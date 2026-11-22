@@ -30,7 +30,7 @@ clean() {
             losetup -d "$dev" || true
         done < "$base/loop-devices"
     fi
-    for member in /root /media /run /etc /var /usr; do umount --lazy "$member" 2>/dev/null || true; done
+    for member in /root /media /run /etc /var/tmp /var /usr; do umount --lazy "$member" 2>/dev/null || true; done
     if [[ "$base" == /tmp/files-audit-fixtures.* ]]; then rm -rf -- "$base"; fi
 }
 trap clean EXIT
@@ -43,6 +43,8 @@ for member in /usr /var /etc /run; do
     mkdir -p "$dirname/upper" "$dirname/work"
     mount -t overlay overlay -o "lowerdir=$member,upperdir=$dirname/upper,workdir=$dirname/work" "$member"
 done
+install -d -m1777 "$base/apt-tmp"
+mount --bind "$base/apt-tmp" /var/tmp
 mkdir -p /usr/share/APPLaunch/bin
 install -m0755 "$binary" /usr/share/APPLaunch/bin/M5CardputerZero-Files
 cat >/usr/bin/udisksctl <<'EOF'

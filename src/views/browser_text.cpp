@@ -67,6 +67,18 @@ std::string fitText(std::string text, int width, const lv_font_t* font, size_t l
            (left == 0 || textWidth(text.substr(0, ends[left + 1]), font) <= leftBudget)) ++left;
     while (right > left + 1 && fits(build(left, right - 1), width, limit, font)) --right;
     while (left + 1 < right && fits(build(left + 1, right), width, limit, font)) ++left;
+    if (preserveExtension && ends[left] > 0 && text[ends[left]] != ' ' && text[ends[left] - 1] != ' ') {
+        const auto space = text.rfind(' ', ends[left] - 1);
+        if (space != std::string::npos && ends[left] - space <= 5 && space > 0) {
+            left = static_cast<size_t>(std::lower_bound(ends.begin(), ends.end(), space) - ends.begin());
+        }
+    }
+    if (preserveExtension && text[ends[right]] != ' ' && text[ends[right] - 1] != ' ') {
+        const auto space = text.find(' ', ends[right]);
+        if (space != std::string::npos && space - ends[right] <= 5) {
+            right = static_cast<size_t>(std::lower_bound(ends.begin(), ends.end(), space + 1) - ends.begin());
+        }
+    }
     return build(left, right);
 }
 
@@ -85,6 +97,23 @@ std::string fitPath(std::string_view path, int width, const lv_font_t* font)
         if (textWidth(tail, font) <= width) return tail;
     }
     return fitText(std::string(leaf == std::string_view::npos ? path : path.substr(leaf + 1)), width, font);
+}
+
+std::string wrapPath(std::string_view path, int width, const lv_font_t* font)
+{
+    std::string result;
+    std::string line;
+    while (!path.empty()) {
+        const auto slash = path.find('/');
+        const auto component = path.substr(0, slash == std::string_view::npos ? path.size() : slash + 1);
+        if (!line.empty() && textWidth(line + std::string(component), font) > width) {
+            result += line + "\n";
+            line.clear();
+        }
+        line += component;
+        path.remove_prefix(component.size());
+    }
+    return result + line;
 }
 
 std::string browserRowText(const FileEntry& entry, int width)
@@ -109,7 +138,7 @@ std::string keyHints(std::initializer_list<std::string_view> primary,
     return text;
 }
 
-std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, bool canMove, bool menu)
+std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, bool canMove, bool menu, bool multipleUsb)
 {
     const auto* open = local("Enter Open", "Enter Otevřít");
     const auto* back = local("Esc Back", "Esc Zpět");
@@ -117,7 +146,11 @@ std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, boo
     const auto* ejectHint = eject ? local("E Eject", "E Vysunout") : "";
     const auto* movement = canMove ? "F↑ X↓" : "";
     const auto* usbHint = usb ? "U USB" : "";
-    if (menu) return keyHints({movement, local("Enter Select", "Enter Vybrat"), back}, {ejectHint, usbHint});
+    if (menu) {
+        const auto* usbAction = !usb ? "" : multipleUsb ? local("U Drives", "U Disky") :
+                                                         local("U Open USB", "U Otevřít USB");
+        return keyHints({movement, local("Enter Select", "Enter Vybrat"), back}, {usbAction});
+    }
     if (places) {
         if (eject) {
             return keyHints({movement, open, ejectHint, actions}, {});
@@ -126,7 +159,7 @@ std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, boo
     }
     if (eject) {
         const auto* driveMovement = canMove && inCzech() ? "F↑X↓" : movement;
-        return keyHints({driveMovement, selected ? (inCzech() ? "Enter ↵" : open) : "", ejectHint, actions, back}, {});
+        return keyHints({driveMovement, selected ? open : "", ejectHint, actions}, {back});
     }
     auto keys = keyHints({movement, selected ? open : "", actions, back}, {usbHint});
     if (usb && keys.find(usbHint) == std::string::npos) {

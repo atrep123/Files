@@ -19,6 +19,7 @@ constexpr int rowHeight = 26;
 constexpr int visibleRows = 5;
 constexpr int rowWidth = 312;
 constexpr int metadataWidth = 84;
+constexpr uint32_t dialogTrackColor = 0x526173;
 
 const lv_image_dsc_t* entryIcon(const FileEntry& entry)
 {
@@ -37,6 +38,7 @@ struct RowData {
     const lv_image_dsc_t* icon = nullptr;
     bool directory = false;
     bool checked = false;
+    bool special = false;
 };
 
 RowData actionRow(BrowserAction action, const FileEntry* target)
@@ -107,6 +109,8 @@ public:
             auto& row = _rows[i];
             row.panel = ui::box(_panel, 0, i * rowHeight, rowWidth, rowHeight, background);
             row.icon = lv_image_create(row.panel);
+            row.specialStem = ui::box(row.panel, 15, 10, 2, 5, background);
+            row.specialDot = ui::box(row.panel, 15, 17, 2, 2, background);
             row.name = ui::label(row.panel, 32, 4, 276, uiFont14());
             const int baseline = lv_font_get_line_height(uiFont14()) - uiFont14()->base_line;
             const int metadataY = 4 + baseline - (lv_font_get_line_height(uiFont12()) - uiFont12()->base_line);
@@ -143,7 +147,7 @@ public:
         ui::hidden(_pasteHint, !visible);
         _hasPasteHint = visible;
         alignEmpty(130 - _reservedHeight);
-        if (visible) ui::line(_pasteHint, local("Paste via Tab", "Vložit přes Tab"), 304, uiFont12());
+        if (visible) ui::line(_pasteHint, local("Tab → Paste", "Tab → Vložit"), 304, uiFont12());
     }
     int selectedY() const
     {
@@ -197,11 +201,12 @@ public:
             if (rebind) {
                 if (_files) {
                     const auto& entry = (*_files)[index];
-                    const auto name = _places && !entry.mountRoot ? localizedMessage(entry.name) : entry.name;
+                    const auto name = entry.incompleteCopy ? local("Incomplete copy", "Nedokončená kopie") :
+                        _places && !entry.mountRoot ? localizedMessage(entry.name) : entry.name;
                     const auto metadata = entry.mountRoot ? (entry.freeBytes ? sizeInUnits(*entry.freeBytes) : "–") :
                                           entry.directory ? "" : sizeInUnits(entry.size);
                     bind(row, {name, metadata, entry.mountRoot ? &image_icon_usb : entryIcon(entry),
-                               entry.directory});
+                               entry.directory, false, entry.special});
                 } else {
                     bind(row, _actions[index]);
                 }
@@ -210,6 +215,9 @@ public:
             const auto foreground = active ? ui::black : ui::white;
             lv_obj_set_style_bg_color(row.panel, lv_color_hex(active ? ui::accent : _background), 0);
             lv_obj_set_style_text_color(row.name, lv_color_hex(foreground), 0);
+            for (auto* piece : {row.specialStem, row.specialDot}) {
+                lv_obj_set_style_bg_color(piece, lv_color_hex(active ? ui::accent : _background), 0);
+            }
             lv_obj_set_style_text_color(row.check, lv_color_hex(foreground), 0);
             lv_obj_set_style_text_color(row.metadata, lv_color_hex(active ? ui::black : ui::secondary), 0);
             lv_obj_set_style_image_recolor(row.icon, lv_color_hex(ui::black), 0);
@@ -228,24 +236,38 @@ private:
         lv_obj_t* metadata;
         lv_obj_t* icon;
         lv_obj_t* check;
+        lv_obj_t* specialStem;
+        lv_obj_t* specialDot;
     };
 
-    void alignEmpty(int panelHeight)
+    void alignEmpty(int)
     {
+        constexpr int panelHeight = 130;
         lv_obj_set_y(_empty, panelHeight / 2 - (_hasPasteHint ? 18 : 9));
         lv_obj_set_y(_pasteHint, panelHeight / 2 + 2);
     }
 
     void bind(const Row& row, const RowData& data)
     {
-        const int used = data.metadata.empty() ? (data.checked ? 24 : 0) : 8 + metadataWidth;
+        const int column = _places ? metadataWidth : std::min(metadataWidth, textWidth(data.metadata, uiFont12()));
+        const int used = data.metadata.empty() ? (data.checked ? 24 : 0) : 8 + column;
         const int width = 276 - used;
         ui::hidden(row.check, !data.checked);
         lv_obj_set_width(row.name, width);
         ui::line(row.name, data.name, width, uiFont14(), std::string::npos, !data.directory);
-        ui::line(row.metadata, data.metadata, metadataWidth, uiFont12());
+        if (!data.metadata.empty()) {
+            lv_obj_set_x(row.metadata, 308 - column);
+            lv_obj_set_width(row.metadata, column);
+            ui::line(row.metadata, data.metadata, column, uiFont12());
+        }
         ui::hidden(row.metadata, data.metadata.empty());
         ui::hidden(row.icon, !data.icon);
+        ui::hidden(row.specialStem, !data.special);
+        ui::hidden(row.specialDot, !data.special);
+        if (data.special) {
+            lv_obj_move_foreground(row.specialStem);
+            lv_obj_move_foreground(row.specialDot);
+        }
         if (data.icon) {
             lv_image_set_src(row.icon, data.icon);
             const int w = data.icon->header.w;
@@ -253,7 +275,7 @@ private:
             const int scale = 16 * LV_SCALE_NONE / std::max(w, h);
             lv_image_set_scale(row.icon, scale);
             // LVGL centers scaled images over the source object's intrinsic area.
-            lv_obj_set_pos(row.icon, 8 + (16 - w) / 2, (rowHeight - h) / 2 + (data.icon == &image_icon_paste ? 1 : 0));
+            lv_obj_set_pos(row.icon, 8 + (16 - w) / 2 - (data.icon == &image_icon_open_file), (rowHeight - h) / 2 + (data.icon == &image_icon_paste ? 1 : 0));
             lv_obj_set_style_transform_pivot_x(row.icon, w / 2, 0);
             lv_obj_set_style_transform_pivot_y(row.icon, h / 2, 0);
         }
@@ -286,11 +308,13 @@ public:
           _identity(ui::label(_box, 8, 29, 288, uiFont14())),
           _meta(ui::label(_box, 8, 48, 288, uiFont12(), ui::secondary)),
           _warningSymbol(ui::label(_box, 8, 65, 12, uiFont14(), ui::warning)),
-          _warning(ui::label(_box, 24, 65, 272, uiFont12(), ui::warning)),
+          _warning(ui::label(_box, 24, 65, 272, uiFont14(), ui::warning)),
+          _metaStatus(ui::label(_box, 8, 48, 288, uiFont12(), ui::secondary)),
           _fixed(ui::label(_box, 8, 65, 288, uiFont14(), ui::error)),
           _body(ui::box(_box, 8, 30, 288, 98, ui::dialog)),
           _text(ui::label(_body, 0, 0, 282, uiFont14())),
           _diagnostics(ui::label(_body, 0, 0, 282, uiMonoFont12(), ui::secondary)),
+          _scrollTrack(ui::box(_box, 294, 0, 1, 12, dialogTrackColor)),
           _thumb(ui::box(_box, 293, 0, 3, 12, ui::secondary)),
           _passwordLine(ui::box(_box, 8, 84, 288, 1, ui::secondary)),
           _passwordCursor(ui::box(_box, 8, 70, 2, 13, ui::white)),
@@ -300,7 +324,8 @@ public:
           _hint(ui::label(_box, 8, 130, 288, uiFont12())),
           _scrollUp(ui::label(_box, 8, 130, 18, uiFont12())),
           _scrollDown(ui::label(_box, 26, 130, 18, uiFont12())),
-          _input(lv_textarea_create(_box))
+          _inputFrame(ui::box(_box, 8, 54, 288, 24, ui::black)),
+          _input(lv_textarea_create(_inputFrame))
     {
 #ifdef FILES_LAYOUT_AUDIT
         lv_obj_add_flag(_box, layout_audit::overlay_flag);
@@ -320,17 +345,17 @@ public:
         lv_obj_set_style_text_align(_hint, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text(_scrollUp, "F↑");
         lv_label_set_text(_scrollDown, "X↓");
+        lv_obj_set_style_border_width(_inputFrame, 1, 0);
+        lv_obj_set_style_border_color(_inputFrame, lv_color_hex(ui::accent), 0);
         lv_obj_remove_style_all(_input);
-        lv_obj_set_size(_input, 288, 24);
-        lv_obj_set_pos(_input, 8, 54);
+        lv_obj_set_size(_input, 278, 22);
+        lv_obj_set_pos(_input, 4, 0);
         lv_obj_set_style_bg_color(_input, lv_color_hex(ui::black), 0);
         lv_obj_set_style_bg_opa(_input, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(_input, 1, 0);
-        lv_obj_set_style_border_color(_input, lv_color_hex(ui::accent), 0);
-        lv_obj_set_style_pad_hor(_input, 6, 0);
+        lv_obj_set_style_pad_hor(_input, 3, 0);
         lv_obj_set_style_pad_top(_input, 2, 0);
         lv_obj_set_style_pad_top(_input, -2, LV_PART_CURSOR);
-        lv_obj_set_style_pad_bottom(_input, -3, LV_PART_CURSOR);
+        lv_obj_set_style_pad_bottom(_input, -4, LV_PART_CURSOR);
         lv_obj_set_style_pad_left(_input, -3, LV_PART_CURSOR);
         lv_obj_set_style_text_color(_input, lv_color_hex(ui::secondary), LV_PART_TEXTAREA_PLACEHOLDER);
         lv_obj_set_style_text_font(_input, uiFont12(), LV_PART_TEXTAREA_PLACEHOLDER);
@@ -352,7 +377,7 @@ public:
             auto* self = static_cast<Dialog*>(lv_event_get_user_data(event));
             if (!self->_setting) self->_vm.setPendingRenameName(lv_textarea_get_text(self->_input));
         }, LV_EVENT_VALUE_CHANGED, this);
-        ui::hidden(_input, true);
+        ui::hidden(_inputFrame, true);
         ui::hidden(_box, true);
     }
 
@@ -390,11 +415,13 @@ public:
         _mode = dialog.mode;
         _last_title = dialog.title;
 
-        const bool symbol = dialog.tone != DialogTone::Normal;
+        const bool packageTitle = dialog.title == local("Debian package", "Balíček Debian");
+        const bool symbol = !packageTitle && dialog.tone != DialogTone::Normal;
         ui::hidden(_symbol, !symbol);
         lv_obj_set_style_text_font(_symbol, dialog.tone == DialogTone::Warning ? uiFont14() : LV_FONT_DEFAULT, 0);
         lv_label_set_text(_symbol, toneSymbol(dialog.tone));
         for (auto* label : {_symbol, _title}) lv_obj_set_style_text_color(label, lv_color_hex(toneColor(dialog.tone)), 0);
+        if (packageTitle) lv_obj_set_style_text_color(_title, lv_color_hex(ui::white), 0);
         lv_obj_set_x(_title, symbol ? 28 : 8);
         lv_obj_set_width(_title, symbol ? 268 : 288);
         ui::line(_title, dialog.title, symbol ? 268 : 288, uiFont14());
@@ -404,16 +431,29 @@ public:
         ui::hidden(_warning, !dialog.rootScripts);
         ui::hidden(_warningSymbol, !dialog.rootScripts);
         ui::line(_identity, dialog.identity, 288, uiFont14(), std::string::npos, true);
-        ui::line(_meta, dialog.metadata, 288, uiFont12());
+        const int statusWidth = dialog.metadataStatus.empty() ? 0 : textWidth(dialog.metadataStatus, uiFont12());
+        const int metadataWidth = 288 - (statusWidth ? statusWidth + 8 : 0);
+        lv_obj_set_width(_meta, metadataWidth);
+        ui::line(_meta, dialog.metadata, metadataWidth, uiFont12());
+        ui::hidden(_metaStatus, !statusWidth);
+        if (statusWidth) {
+            lv_obj_set_x(_metaStatus, 296 - statusWidth);
+            lv_obj_set_width(_metaStatus, statusWidth);
+            ui::line(_metaStatus, dialog.metadataStatus, statusWidth, uiFont12());
+        }
         lv_label_set_text(_warning, local("Install scripts will run as root", "Při instalaci poběží skripty jako root"));
         const bool password = _mode == PackageDialogMode::Password;
         const bool installing = _mode == PackageDialogMode::Installing;
         const int fixedY = dialog.rootScripts ? 82 : !dialog.metadata.empty() ? 66 : 50;
         ui::hidden(_fixed, dialog.fixedStatus.empty());
         lv_obj_set_y(_fixed, fixedY);
-        ui::line(_fixed, dialog.fixedStatus, 288, uiFont14());
+        lv_obj_set_style_text_color(_fixed, lv_color_hex(dialog.tone == DialogTone::Error && packageTitle ?
+                                                        ui::error : ui::white), 0);
+        const auto fixed = packageTitle && !dialog.fixedStatus.empty() ? "× " + dialog.fixedStatus : dialog.fixedStatus;
+        ui::line(_fixed, fixed, 288, uiFont14());
         ui::hidden(_passwordLine, !password);
-        ui::hidden(_passwordCursor, !password || !dialog.maskedPassword.empty());
+        ui::hidden(_passwordCursor, !password);
+        lv_obj_set_x(_passwordCursor, 9 + textWidth(dialog.maskedPassword, uiFont14()));
         ui::hidden(_masked, !password || dialog.maskedPassword.empty());
         ui::line(_masked, dialog.maskedPassword, 288, uiFont14());
         const bool transferring = _mode == PackageDialogMode::Transferring;
@@ -422,7 +462,7 @@ public:
         lv_obj_set_y(_progressTrack, installing ? 80 : 72);
         if (dialog.progress) {
             lv_obj_set_x(_progressFill, 0);
-            lv_obj_set_width(_progressFill, 286 * *dialog.progress / 100);
+            lv_obj_set_width(_progressFill, (286 * *dialog.progress + 50) / 100);
             ui::hidden(_progressFill, *dialog.progress == 0);
         } else if (_indeterminate) {
             lv_obj_set_width(_progressFill, 52);
@@ -473,7 +513,7 @@ public:
         if (!previousMode || !previousTitle) lv_obj_scroll_to_y(_body, 0, LV_ANIM_OFF);
         lv_obj_update_layout(_box);
         updateThumb();
-        const bool canScroll = !rename.active && !deletion.active &&
+        const bool canScroll = !rename.active &&
                                lv_obj_get_scroll_top(_body) + lv_obj_get_scroll_bottom(_body) > 0 &&
                                (_mode == PackageDialogMode::Review || _mode == PackageDialogMode::Result);
         const auto cancel = local("Esc Cancel", "Esc Zrušit");
@@ -504,7 +544,11 @@ public:
                 default: break;
             }
         }
-        _resultScroll = canScroll && _mode == PackageDialogMode::Result;
+        _resultScroll = canScroll && !deletion.active && _mode == PackageDialogMode::Result;
+        _scrollConfirm = canScroll && (deletion.active || _mode == PackageDialogMode::Review);
+        _scrollAction = deletion.active ? local("Enter Delete", "Enter Smazat") :
+                        dialog.allowInstall ? local("Enter Install", "Enter Instalovat") : "";
+        _scrollBack = deletion.active || dialog.allowInstall ? cancel : back;
         lv_obj_set_x(_hint, 8);
         lv_obj_set_width(_hint, 288);
         lv_obj_set_style_text_align(_hint, LV_TEXT_ALIGN_CENTER, 0);
@@ -516,6 +560,7 @@ public:
             refreshEditHint();
         } else {
             if (_resultScroll) updateResultHint();
+            else if (_scrollConfirm) updateConfirmHint();
             else ui::keyLegend(_hint, hint);
         }
     }
@@ -547,6 +592,7 @@ public:
         if (_mode == PackageDialogMode::Review || (_mode == PackageDialogMode::Result && !_editing)) {
             lv_obj_scroll_by_bounded(_body, 0, -offset, LV_ANIM_OFF);
             if (_resultScroll) updateResultHint();
+            else if (_scrollConfirm) updateConfirmHint();
         }
     }
 
@@ -560,6 +606,14 @@ public:
     }
 
 private:
+    void updateConfirmHint()
+    {
+        const bool up = lv_obj_get_scroll_top(_body) > 0;
+        const bool down = lv_obj_get_scroll_bottom(_body) > 0;
+        const char* direction = up ? (down ? "F↑ X↓" : "F↑") : down ? "X↓" : "";
+        ui::keyLegend(_hint, keyHints({direction, _scrollAction, _scrollBack}, {}, 288));
+    }
+
     void updateResultHint()
     {
         // Reserve both slots as the scroll position changes.
@@ -588,9 +642,13 @@ private:
     {
         const int top = lv_obj_get_scroll_top(_body);
         const int range = top + lv_obj_get_scroll_bottom(_body);
-        ui::hidden(_thumb, range <= 0 || (_mode != PackageDialogMode::Review && _mode != PackageDialogMode::Result));
+        const bool hide = range <= 0 || (_mode != PackageDialogMode::Review && _mode != PackageDialogMode::Result);
+        ui::hidden(_thumb, hide);
+        ui::hidden(_scrollTrack, hide);
         if (range <= 0) return;
         const int track = lv_obj_get_height(_body);
+        lv_obj_set_height(_scrollTrack, track);
+        lv_obj_set_y(_scrollTrack, lv_obj_get_y(_body));
         const int height = std::max(12, track * track / (track + range));
         lv_obj_set_height(_thumb, height);
         lv_obj_set_y(_thumb, lv_obj_get_y(_body) + (track - height) * top / range);
@@ -606,7 +664,7 @@ private:
     {
         if (editing == _editing) return;
         _editing = editing;
-        ui::hidden(_input, !editing);
+        ui::hidden(_inputFrame, !editing);
         lv_obj_set_style_text_color(_text, lv_color_hex(ui::white), 0);
         if (!editing) {
             if (lv_obj_get_group(_input)) lv_group_remove_obj(_input);
@@ -625,10 +683,12 @@ private:
     lv_obj_t* _meta;
     lv_obj_t* _warningSymbol;
     lv_obj_t* _warning;
+    lv_obj_t* _metaStatus;
     lv_obj_t* _fixed;
     lv_obj_t* _body;
     lv_obj_t* _text;
     lv_obj_t* _diagnostics;
+    lv_obj_t* _scrollTrack;
     lv_obj_t* _thumb;
     lv_obj_t* _passwordLine;
     lv_obj_t* _passwordCursor;
@@ -638,6 +698,7 @@ private:
     lv_obj_t* _hint;
     lv_obj_t* _scrollUp;
     lv_obj_t* _scrollDown;
+    lv_obj_t* _inputFrame;
     lv_obj_t* _input;
     PackageDialogMode _mode = PackageDialogMode::Closed;
     std::string _last_title;
@@ -645,6 +706,9 @@ private:
     std::string _editError;
     bool _indeterminate = false;
     bool _resultScroll = false;
+    bool _scrollConfirm = false;
+    const char* _scrollAction = "";
+    const char* _scrollBack = "";
     bool _setting = false;
     bool _editing = false;
 };
@@ -800,9 +864,13 @@ void BrowserView::updateChrome()
     const bool movement = menu ? _vm.actionCount() > 1 : _vm.entries().get().size() > 1;
     const auto keys = _magic_seen ? local("Esc Back", "Esc Zpět") :
         browserKeyHint(places, _vm.canEject() && !_vm.languageMenu(), _usb && !_usb_action,
-                       _vm.selectedEntry() != nullptr, movement, menu);
+                       _vm.selectedEntry() != nullptr, movement, menu, _vm.hasMultipleRemovableVolumes());
     ui::keyLegend(_keys, keys);
-    lv_label_set_text(_menu_exit, local("Hold Esc · Exit", "Podržet Esc · Ukončit"));
+    const bool languageError = menu && _vm.languageMenu() && _vm.status().get() == "Could not save language";
+    lv_obj_set_style_text_color(_menu_exit, lv_color_hex(languageError ? ui::error : ui::secondary), 0);
+    lv_label_set_text(_menu_exit, languageError ? local("× Could not save language", "× Jazyk se nepodařilo uložit") :
+                                                  local("Hold Esc · Exit", "Podržet Esc · Ukončit"));
+    lv_obj_set_y(lv_obj_get_parent(_menu_exit), languageError ? 102 : 124);
     lv_label_set_text(_no_usb, local("No USB drive detected", "Žádný USB disk"));
     ui::hidden(lv_obj_get_parent(_menu_exit), !menu || _vm.packageDialogOpen());
     ui::hidden(_no_usb, !places || _usb || _vm.modalInputActive() || _external_height || _toast_duration);
@@ -843,6 +911,10 @@ void BrowserView::updateDialog()
 
 void BrowserView::updateStatus(const std::string& status)
 {
+    if (status == "Could not save language" && _vm.languageMenu()) {
+        updateChrome();
+        return;
+    }
     if (status.empty() || status == "Ready" || status == "Empty folder") {
         _toast_duration = 0;
         placeToast();
@@ -865,6 +937,10 @@ void BrowserView::updateStatus(const std::string& status)
         display = local("Deleted “", "Smazáno „") + status.substr(8) + local("”", "“");
     } else if (status.rfind("Created ", 0) == 0 && status.rfind("Created copy ", 0) != 0) {
         display = inCzech() ? "Složka „" + status.substr(8) + "“ vytvořena" : "Created folder “" + status.substr(8) + "”";
+    }
+    if (status.rfind("Created copy ", 0) == 0 &&
+        (textLength(display) > 34 || textWidth(display, uiFont12()) > 280)) {
+        display = local("Created copy\n", "Vytvořena kopie\n") + status.substr(13);
     }
     ui::toast(_toast, display, 126, success ? ui::success : ui::white);
     updateChrome();

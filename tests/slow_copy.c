@@ -43,7 +43,7 @@ ssize_t write(int fd, const void *data, size_t count)
 int unlinkat(int dirfd, const char *name, int flags)
 {
     int (*next)(int, const char *, int) = dlsym(RTLD_NEXT, "unlinkat");
-    if (getenv("FILES_AUDIT_KEEP_STAGE") && strcmp(name, "payload") == 0) {
+    if (getenv("FILES_AUDIT_KEEP_STAGE")) {
         char relative[64], target[4096];
         snprintf(relative, sizeof relative, "/proc/self/fd/%d", dirfd);
         const ssize_t count = readlink(relative, target, sizeof(target) - 1);

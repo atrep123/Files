@@ -45,6 +45,7 @@ struct PackageDialog {
     std::string maskedPassword;
     std::optional<unsigned> progress;
     bool cancelling = false;
+    std::string metadataStatus;
 };
 
 struct VolumeNotice {
@@ -205,6 +206,7 @@ private:
     std::string _transfer_source_name;
     std::string _transfer_destination_name;
     std::string _transfer_destination_caption;
+    std::string _transfer_return_path;
     std::string _package_source_name;
     std::string _package_file_name;
     std::string transferProgress(uint64_t bytes) const;

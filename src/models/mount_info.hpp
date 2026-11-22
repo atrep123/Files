@@ -17,6 +17,7 @@ struct MountRecord {
 
 std::vector<MountRecord> readMountInfo(std::istream& input);
 std::vector<MountRecord> currentMounts();
-bool containsMountPoint(const std::filesystem::path& path, std::error_code& error);
+bool containsMountPoint(const std::filesystem::path& path, std::error_code& error,
+                        std::filesystem::path* relativeMount = nullptr);
 
 }  // namespace files::internal

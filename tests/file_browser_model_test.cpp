@@ -237,6 +237,22 @@ void testRelativeDirectoryAndFailedBack()
             "goBack did not return to the original directory after recovery");
 }
 
+void testDeleteSelectsNeighbor()
+{
+    TemporaryTree tree;
+    for (const auto* name : {"01.txt", "02.txt", "03.txt"}) {
+        writeFile(tree.root / name);
+    }
+    files::FileBrowserModel model(tree.root.string(), {});
+    selectName(model, "02.txt");
+    require(static_cast<bool>(model.deleteSelected()), "failed to delete middle entry");
+    require(model.selectedEntry() && model.selectedEntry()->name == "03.txt",
+            "deleting a middle entry did not select the following neighbor");
+    require(static_cast<bool>(model.deleteSelected()), "failed to delete last entry");
+    require(model.selectedEntry() && model.selectedEntry()->name == "01.txt",
+            "deleting the last entry did not select the preceding neighbor");
+}
+
 void testRefreshFailurePreservesListing()
 {
     TemporaryTree tree;
@@ -269,5 +285,6 @@ int main()
     testDirectorySelectionRestoration();
     testRelativeDirectoryAndFailedBack();
     testRefreshFailurePreservesListing();
+    testDeleteSelectsNeighbor();
     return 0;
 }

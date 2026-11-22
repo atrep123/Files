@@ -5,6 +5,7 @@
 #include <miniaudio.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -237,7 +238,14 @@ private:
             return true;
         }
 
-#if FILES_USE_PULSEAUDIO
+#ifdef FILES_LAYOUT_AUDIT
+        ma_backend backends[] = {ma_backend_null};
+        const auto result = ma_context_init(backends, 1, nullptr, &context);
+        if (result != MA_SUCCESS) {
+            spdlog::error("AudioPreviewModel: layout audit audio initialization failed: {}", static_cast<int>(result));
+            return false;
+        }
+#elif FILES_USE_PULSEAUDIO
         ma_backend backends[] = {ma_backend_pulseaudio};
         ma_result result      = ma_context_init(backends, 1, nullptr, &context);
         if (result != MA_SUCCESS) {
@@ -364,33 +372,27 @@ private:
             return;
         }
 
-        const uint32_t step              = std::max<uint32_t>(1, self->speed_step.load());
-        float frame[kPlaybackChannels]   = {};
-        float discard[kPlaybackChannels] = {};
-
-        for (ma_uint32 i = 0; i < frame_count; ++i) {
-            ma_uint64 frames_read = 0;
-            ma_decoder_read_pcm_frames(&self->decoder, frame, 1, &frames_read);
-            if (frames_read == 0) {
+        const auto step = self->speed_step.load();
+        constexpr ma_uint32 batchFrames = 256;
+        std::array<float, batchFrames * 5 * kPlaybackChannels> decoded;
+        for (ma_uint32 offset = 0; offset < frame_count;) {
+            const auto batch = std::min(batchFrames, frame_count - offset);
+            const auto needed = batch * step;
+            ma_uint64 received = 0;
+            ma_decoder_read_pcm_frames(&self->decoder, decoded.data(), needed, &received);
+            const auto samples = static_cast<ma_uint32>((received + step - 1) / step);
+            for (ma_uint32 i = 0; i < samples; ++i) {
+                for (ma_uint32 channel = 0; channel < kPlaybackChannels; ++channel) {
+                    out[(offset + i) * kPlaybackChannels + channel] = audio_playback_gain::apply(
+                        decoded[i * step * kPlaybackChannels + channel], self->normalization_gain);
+                }
+            }
+            if (received < needed) {
                 self->playing.store(false);
                 self->finished.store(true);
                 break;
             }
-
-            for (ma_uint32 channel = 0; channel < kPlaybackChannels; ++channel) {
-                out[static_cast<size_t>(i) * kPlaybackChannels + channel] =
-                    audio_playback_gain::apply(frame[channel], self->normalization_gain);
-            }
-
-            for (uint32_t skip = 1; skip < step; ++skip) {
-                ma_uint64 discarded = 0;
-                ma_decoder_read_pcm_frames(&self->decoder, discard, 1, &discarded);
-                if (discarded == 0) {
-                    self->playing.store(false);
-                    self->finished.store(true);
-                    return;
-                }
-            }
+            offset += batch;
         }
     }
 };

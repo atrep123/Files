@@ -58,7 +58,7 @@ std::vector<MountRecord> currentMounts()
     return readMountInfo(stream);
 }
 
-bool containsMountPoint(const fs::path& path, std::error_code& error)
+bool containsMountPoint(const fs::path& path, std::error_code& error, fs::path* relativeMount)
 {
     error.clear();
 #if defined(__linux__)
@@ -77,10 +77,13 @@ bool containsMountPoint(const fs::path& path, std::error_code& error)
     }
     return std::any_of(mounts.begin(), mounts.end(), [&](const auto& mount) {
         const auto relative = mount.target.lexically_relative(resolved);
-        return !relative.empty() && *relative.begin() != "..";
+        if (relative.empty() || *relative.begin() == "..") return false;
+        if (relativeMount) *relativeMount = relative;
+        return true;
     });
 #else
     (void)path;
+    (void)relativeMount;
     return false;
 #endif
 }

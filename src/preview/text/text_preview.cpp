@@ -204,7 +204,7 @@ public:
         int error = 0;
         auto content = readTextContent(file, error);
         if (content) {
-            _content = content->empty() ? local("Empty file", "Prázdný soubor") : std::move(*content);
+            _content = std::move(*content);
         } else {
             _read_failed = true;
             if (error == EACCES || error == EPERM) {
@@ -342,8 +342,17 @@ private:
         lv_obj_add_flag(_panel->raw_ptr(), layout_audit::viewport_flag);
 #endif
 
+        if (!_read_failed && _content.empty()) {
+            auto* empty = ui::label(_panel->raw_ptr(), 0, 56, 304, uiFont14(), ui::secondary);
+            lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
+            lv_label_set_text(empty, local("Empty file", "Prázdný soubor"));
+            return;
+        }
         _label = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Label>(_panel->raw_ptr());
-        _label->setText(_read_failed ? local("× Read failed", "× Čtení se nezdařilo") : _content.c_str());
+        const auto display = !_content.empty() && _content.front() == '/' &&
+            _content.find_first_of(" \t\r\n") == std::string::npos
+            ? wrapPath(_content, 296, uiFont14()) : _content;
+        _label->setText(_read_failed ? local("Read failed", "Čtení se nezdařilo") : display.c_str());
         _label->setTextFont(uiFont14());
         lv_obj_set_style_text_line_space(_label->raw_ptr(), kScrollStep - lv_font_get_line_height(uiFont14()), 0);
         _label->setTextColor(lv_color_hex(_read_failed ? kMutedTextColor : kTextColor));
@@ -351,6 +360,9 @@ private:
         _label->setSize(kScreenWidth - kTextPaddingX * 2 - 8, LV_SIZE_CONTENT);
         _label->setPos(0, 0);
         if (_read_failed) {
+            _label->setPos(14, 0);
+            _label->setSize(282, LV_SIZE_CONTENT);
+            ui::errorCross(_panel->raw_ptr(), 0, 4);
             auto* reason = ui::label(_panel->raw_ptr(), 0, kScrollStep + 3, 296, uiFont14());
             lv_label_set_text(reason, _read_reason.c_str());
         }
@@ -362,6 +374,8 @@ private:
         _scrollbar_track->setSize(kScrollbarW, kScrollbarH);
         _scrollbar_track->setPos(kScrollbarX, kScrollbarY);
         _scrollbar_track->setBgColor(lv_color_hex(kScrollbarTrackColor));
+        ui::box(_scrollbar_track->raw_ptr(), 0, 0, 3, 1, ui::secondary);
+        ui::box(_scrollbar_track->raw_ptr(), 0, kScrollbarH - 1, 3, 1, ui::secondary);
         _scrollbar_track->setBgOpa(LV_OPA_COVER);
         _scrollbar_track->setBorderWidth(0);
         _scrollbar_track->setRadius(0);

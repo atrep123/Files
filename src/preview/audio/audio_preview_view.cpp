@@ -8,8 +8,6 @@
 #include "assets/assets.h"
 #include "assets/font_assets.hpp"
 #include "views/ui_style.hpp"
-#include <core/color/color.hpp>
-#include <core/easing/ease.hpp>
 #include <miniaudio.h>
 #include <algorithm>
 #include <cctype>
@@ -34,13 +32,12 @@ constexpr int32_t kWaveformMaxBarHeight    = 56;
 constexpr size_t kWaveformVisibleBarCount  = 94;
 constexpr uint32_t kWaveformIdleColor      = 0xFFFFFF;
 constexpr uint32_t kWaveformPlayingColor   = ui::success;
-constexpr float kWaveformColorDuration     = 0.4f;
 constexpr ma_uint32 kWaveformSampleRate    = 48000;
 constexpr ma_uint32 kWaveformChannels      = 1;
 constexpr ma_format kWaveformFormat        = ma_format_f32;
 constexpr float kWaveformBarsPerSecond     = 24.0f;
 constexpr size_t kWaveformMaxDecodedBars   = 8192;
-constexpr int32_t kPlayheadWidth           = 2;
+constexpr int32_t kPlayheadWidth           = 3;
 constexpr int32_t kPlayheadHeight          = 64;
 constexpr uint32_t kPlayheadColor          = ui::accent;
 constexpr int32_t kProgressBarX            = 20;
@@ -97,11 +94,8 @@ const void* speedIcon(float speed)
 class AudioPreviewView::WaveformView {
 public:
     explicit WaveformView(lv_obj_t* parent)
-        : _panel(std::make_unique<smooth_ui_toolkit::lvgl_cpp::Container>(parent)), _color(kWaveformIdleColor)
+        : _panel(std::make_unique<smooth_ui_toolkit::lvgl_cpp::Container>(parent))
     {
-        _color.duration       = kWaveformColorDuration;
-        _color.easingFunction = smooth_ui_toolkit::ease::ease_out_quad;
-        _color.begin();
 
         _panel->setSize(kWaveformWidth, kWaveformHeight);
         _panel->align(LV_ALIGN_CENTER, kWaveformX, kWaveformY);
@@ -130,25 +124,20 @@ public:
 
     void setPlaying(bool playing)
     {
-        _color.move(playing ? kWaveformPlayingColor : kWaveformIdleColor);
-    }
-
-    void tick()
-    {
-        _color.update();
+        _color = playing ? kWaveformPlayingColor : kWaveformIdleColor;
         lv_obj_invalidate(_panel->raw_ptr());
     }
 
 private:
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _panel;
-    smooth_ui_toolkit::color::AnimateRgb_t _color;
+    uint32_t _color = kWaveformIdleColor;
     std::vector<float> _bars;
     float _duration_sec = 0.0f;
     float _progress_sec = 0.0f;
 
     lv_color_t currentColor() const
     {
-        return lv_color_hex(_color.toHex());
+        return lv_color_hex(_color);
     }
 
     void decode(const std::string& path, uint32_t durationSec)
@@ -355,7 +344,7 @@ void AudioPreviewView::attach(lv_obj_t* parent)
     _playhead->align(LV_ALIGN_CENTER, 0, kWaveformY);
     _playhead->setBgColor(lv_color_hex(kPlayheadColor));
     _playhead->setBgOpa(LV_OPA_COVER);
-    _playhead->setRadius(1);
+    _playhead->setRadius(0);
     _playhead->setBorderWidth(0);
     _playhead->setShadowWidth(0);
     _playhead->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
@@ -383,8 +372,7 @@ void AudioPreviewView::attach(lv_obj_t* parent)
     const auto* error = local("Cannot play audio", "Zvuk nelze přehrát");
     const int textWidthPx = textWidth(error, uiFont14());
     const int start = (320 - 14 - textWidthPx) / 2;
-    auto* icon = ui::label(_error_panel, start, 52, 12, LV_FONT_DEFAULT, ui::error);
-    lv_label_set_text(icon, LV_SYMBOL_CLOSE);
+    ui::errorCross(_error_panel, start, 56);
     auto* title = ui::label(_error_panel, start + 14, 52, textWidthPx + 2, uiFont14(), ui::error);
     lv_label_set_text(title, error);
     ui::hidden(_error_panel, true);
@@ -417,15 +405,6 @@ void AudioPreviewView::detach()
     _title_label.reset();
     _state_label = _speed_label = _error_panel = nullptr;
     _root.reset();
-}
-
-void AudioPreviewView::tick(uint32_t nowMs)
-{
-    (void)nowMs;
-
-    if (_waveform) {
-        _waveform->tick();
-    }
 }
 
 void AudioPreviewView::renderState(AudioPlaybackState state)
@@ -475,6 +454,13 @@ void AudioPreviewView::renderProgress(float progressSec)
     if (_remaining_label) {
         _remaining_label->setText(remainingTimeText(duration, progressSec));
     }
+    const bool canRewind = progressSec > 0;
+    const bool canAdvance = progressSec < duration;
+    if (canRewind != _canRewind || canAdvance != _canAdvance) {
+        _canRewind = canRewind;
+        _canAdvance = canAdvance;
+        updateKeyBar();
+    }
 }
 
 void AudioPreviewView::renderSpeed(float speed)
@@ -494,11 +480,11 @@ void AudioPreviewView::updateKeyBar()
         return;
     }
     _key_bar->setItems({
-        {'5', &image_icon_playback_replay},
+        {static_cast<uint32_t>(_canRewind ? '5' : 0), &image_icon_playback_replay, "−10"},
         {'6', _view_model.state().get() == AudioPlaybackState::Playing ? &image_icon_playback_pause
                                                                        : &image_icon_playback_play,
          _view_model.state().get() == AudioPlaybackState::Stopped ? local("Replay", "Znovu") : nullptr},
-        {'7', &image_icon_playback_forward},
+        {static_cast<uint32_t>(_canAdvance ? '7' : 0), &image_icon_playback_forward, "+10"},
         {'8', speedIcon(_view_model.speed().get())},
     });
 }
