@@ -144,7 +144,14 @@ Open a `.deb` with **Enter**, scroll the package details with **F/X** or the
 arrow keys, and press **Enter** to install the reviewed package. **Esc** cancels
 the review. Installing uses the normal Debian package manager with sudo
 authorization. Packages for other architectures cannot be confirmed unless that
-architecture is configured on the system.
+architecture is configured on the system. The review accepts archives up to
+64 MiB and checks available space in the `/var/tmp` directory before staging.
+
+Without Store, the package manager has a one-hour installation timeout by
+default. On failure after starting an installation, Files reports the path to
+its recovery record and protected archive. Review the output of `dpkg --audit` and the record
+before retrying. An administrator can remove the reported staging directory
+after resolving the package state.
 
 Video preview uses `ffmpeg` directly on CardputerZero. Audio is sent to the
 PulseAudio sink named by `FILES_VIDEO_PULSE_SINK`, or to `default` when unset.

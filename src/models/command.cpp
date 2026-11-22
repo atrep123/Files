@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <csignal>
 #include <cstring>
 #include <fcntl.h>
 #include <spawn.h>
@@ -38,10 +39,9 @@ struct CommandFds {
     }
 };
 
-}  // namespace
-
-CommandResult runCommand(const std::vector<std::string>& arguments, const CommandOutput& onOutput,
-                         const std::string& input, bool captureStdout, int stdinFd)
+CommandResult runCommandImpl(const std::vector<std::string>& arguments, const CommandOutput& onOutput,
+                             const std::string& input, bool captureStdout, int stdinFd,
+                             std::chrono::milliseconds timeout)
 {
     if (arguments.empty() || (!input.empty() && stdinFd >= 0)) {
         return {-1, "Invalid command arguments"};
@@ -106,9 +106,27 @@ CommandResult runCommand(const std::vector<std::string>& arguments, const Comman
     }
     env.push_back(nullptr);
 
+    using Clock = std::chrono::steady_clock;
+    const bool timed = timeout.count() > 0;
+    const auto deadline = Clock::now() + timeout;
+    posix_spawnattr_t attributes;
+    bool attributesInitialized = false;
+    if (!error && timed) {
+        error = posix_spawnattr_init(&attributes);
+        attributesInitialized = error == 0;
+        if (!error) {
+            error = posix_spawnattr_setpgroup(&attributes, 0);
+        }
+        if (!error) {
+            error = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+        }
+    }
     pid_t child = -1;
     if (!error) {
-        error = posix_spawn(&child, argv.front(), &actions, nullptr, argv.data(), env.data());
+        error = posix_spawn(&child, argv.front(), &actions, timed ? &attributes : nullptr, argv.data(), env.data());
+    }
+    if (attributesInitialized) {
+        posix_spawnattr_destroy(&attributes);
     }
     posix_spawn_file_actions_destroy(&actions);
     if (error) {
@@ -142,7 +160,7 @@ CommandResult runCommand(const std::vector<std::string>& arguments, const Comman
 
     constexpr size_t outputLimit = 128 * 1024;
     constexpr auto drainLimit = std::chrono::milliseconds(150);
-    using Clock = std::chrono::steady_clock;
+    constexpr auto termGrace = std::chrono::seconds(2);
     CommandResult result;
     char buffer[4096];
     bool eof = false;
@@ -150,23 +168,35 @@ CommandResult runCommand(const std::vector<std::string>& arguments, const Comman
     int status = 0;
     pid_t waited = 0;
     Clock::time_point drainUntil;
+    Clock::time_point killAt;
     while (!eof || waited == 0) {
-        if (waited == 0) {
+        const auto now = Clock::now();
+        if (waited == 0 && (!result.timedOut || now >= killAt)) {
+            const bool forceExit = result.timedOut;
+            if (forceExit) {
+                // Reap the leader only after signalling the group, even if it exited on SIGTERM.
+                kill(-child, SIGKILL);
+            }
             do {
-                waited = waitpid(child, &status, eof ? 0 : WNOHANG);
+                waited = waitpid(child, &status, forceExit || (eof && !timed) ? 0 : WNOHANG);
             } while (waited < 0 && errno == EINTR);
             if (waited < 0) {
-                return {-1, std::strerror(errno)};
+                result.output += "\n" + std::string(std::strerror(errno));
+                return result;
             }
             if (waited == child) {
                 drainUntil = Clock::now() + drainLimit;
+            } else if (timed && now >= deadline) {
+                kill(-child, SIGTERM);
+                result.timedOut = true;
+                killAt = now + termGrace;
             }
         }
-        if (eof || (waited == child && Clock::now() >= drainUntil)) {
+        if (waited == child && (eof || Clock::now() >= drainUntil)) {
             break;
         }
         pollfd output{fds.output[0], POLLIN, 0};
-        const int ready = poll(&output, 1, 25);
+        const int ready = poll(&output, eof ? 0 : 1, 25);
         if (ready < 0 && errno != EINTR) {
             readError = errno;
             eof = true;
@@ -196,12 +226,31 @@ CommandResult runCommand(const std::vector<std::string>& arguments, const Comman
     if (readError) {
         result.output += "\n" + std::string(std::strerror(readError));
     }
-    if (WIFEXITED(status) && !readError) {
+    if (result.timedOut) {
+        result.exitCode = 124;
+    } else if (WIFEXITED(status) && !readError) {
         result.exitCode = WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {
         result.exitCode = 128 + WTERMSIG(status);
     }
     return result;
+}
+
+}  // namespace
+
+CommandResult runCommand(const std::vector<std::string>& arguments, const CommandOutput& onOutput,
+                         const std::string& input, bool captureStdout, int stdinFd)
+{
+    return runCommandImpl(arguments, onOutput, input, captureStdout, stdinFd, {});
+}
+
+CommandResult runTimedCommand(const std::vector<std::string>& arguments, std::chrono::milliseconds timeout,
+                              const CommandOutput& onOutput)
+{
+    if (timeout.count() <= 0) {
+        return {-1, "Command timeout must be positive"};
+    }
+    return runCommandImpl(arguments, onOutput, {}, true, -1, timeout);
 }
 
 }  // namespace files::internal

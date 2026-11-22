@@ -44,10 +44,11 @@ struct LockFd {
 
 struct RootStage {
     fs::path directory;
+    bool preserveForRecovery = false;
     ~RootStage()
     {
         std::error_code error;
-        if (!directory.empty()) {
+        if (!directory.empty() && !preserveForRecovery) {
             fs::remove_all(directory, error);
         }
     }
@@ -173,7 +174,8 @@ fi
     return aptHook;
 }
 
-std::string storeInstall(const fs::path& path, const std::string& name, const std::string& version, bool apt, const fs::path& aptHook)
+fs::path writePendingRecord(const fs::path& path, const std::string& name, const std::string& version,
+                            const std::string& sha256)
 {
     const auto md5 = runCommand({"/usr/bin/md5sum", "--", path.string()});
     const auto checksum = md5.output.substr(0, md5.output.find(' '));
@@ -186,12 +188,17 @@ std::string storeInstall(const fs::path& path, const std::string& name, const st
     record << "{\"transaction_id\":\"files-local\",\"action\":\"install\","
            << "\"app_id\":\"" << name << "\",\"package\":\"" << name << "\","
            << "\"expected_package_version\":\"" << version << "\",\"expected_md5\":\"" << checksum << "\","
-           << "\"deb_path\":\"" << path.string() << "\"}\n";
+           << "\"expected_sha256\":\"" << sha256 << "\",\"deb_path\":\"" << path.string() << "\"}\n";
     record.close();
-    if (!record) {
-        throw std::runtime_error("Cannot write Store's package transaction record.");
+    if (!record || chmod(pending.c_str(), 0600) != 0) {
+        throw std::runtime_error("Cannot write the package recovery record.");
     }
+    return pending;
+}
 
+std::string storeInstall(const fs::path& path, const fs::path& pending, bool apt, const fs::path& aptHook)
+{
+    const auto stage = path.parent_path();
     // Store uses PATH for its package tools. Keep its verification and transaction logic,
     // and apply the reviewed plan and Files' conffile policy to its package manager call.
     const auto tools = stage / "tools";
@@ -251,6 +258,9 @@ void copyReviewedArchive(const fs::path& path)
     if (fstat(STDIN_FILENO, &input) != 0 || !S_ISREG(input.st_mode)) {
         throw std::runtime_error("The reviewed archive must be passed as a regular file.");
     }
+    if (const auto error = debStagingError(path.parent_path(), input.st_size); !error.empty()) {
+        throw std::runtime_error("Cannot stage the reviewed package: " + error);
+    }
     const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
     if (fd < 0) {
         throw std::runtime_error("Cannot create the protected package copy.");
@@ -285,6 +295,19 @@ void copyReviewedArchive(const fs::path& path)
     }
 }
 
+std::chrono::seconds packageTimeout()
+{
+    const char* value = std::getenv("M5APPSTORE_PACKAGE_TIMEOUT");
+    if (value && *value) {
+        char* end = nullptr;
+        const auto seconds = std::strtol(value, &end, 10);
+        if (*end == '\0' && seconds > 0) {
+            return std::chrono::seconds(std::min(seconds, 7200L));
+        }
+    }
+    return std::chrono::hours(1);
+}
+
 bool needsApt(const std::string& plan, const std::string& name)
 {
     std::istringstream lines(plan);
@@ -301,6 +324,24 @@ bool needsApt(const std::string& plan, const std::string& name)
 #endif
 
 }  // namespace
+
+std::string debStagingError(const fs::path& directory, std::uintmax_t bytes)
+{
+    // Keep the sealed review snapshot bounded on devices with 512 MiB of RAM.
+    constexpr std::uintmax_t maxArchiveBytes = 64 * 1024 * 1024;
+    if (bytes > maxArchiveBytes) {
+        return "Debian package exceeds the 64 MiB review limit.";
+    }
+    std::error_code error;
+    const auto space = fs::space(directory, error);
+    if (error) {
+        return "Cannot check free space for Debian package staging: " + error.message();
+    }
+    if (space.available < bytes) {
+        return "Not enough free space for Debian package staging in " + directory.string() + ".";
+    }
+    return {};
+}
 
 std::vector<std::string> debAptCommand(const fs::path& path, bool simulate)
 {
@@ -337,7 +378,7 @@ std::string sha256CommandOutput(const CommandResult& result)
 
 std::string debAuditMessage()
 {
-    const auto audit = runCommand({"/usr/bin/dpkg", "--audit"});
+    const auto audit = runTimedCommand({"/usr/bin/dpkg", "--audit"}, std::chrono::seconds(10));
     const auto text = trimWhitespace(cleanCommandText(audit.output));
     if (!audit) {
         return "dpkg --audit could not complete. Check package manager state in a terminal.\n" + text;
@@ -436,10 +477,12 @@ int runDebInstallHelper(int argc, char** argv)
                          (!dependencies.empty() && !runCommand({"/usr/bin/dpkg-checkbuilddeps", "-d",
                                                                dependencies, "/dev/null"}));
         const auto aptHook = apt || store ? prepareAptHook(package) : fs::path{};
+        const auto pending = writePendingRecord(package, name, version, argv[2]);
+        stage.preserveForRecovery = true;
         std::cout << "Installing " << name << "...\n" << std::flush;
         if (store) {
             std::cout << "Using the Store package transaction helper.\n" << std::flush;
-            const auto error = storeInstall(package, name, version, apt, aptHook);
+            const auto error = storeInstall(package, pending, apt, aptHook);
             if (!error.empty()) {
                 throw std::runtime_error(error);
             }
@@ -450,8 +493,13 @@ int runDebInstallHelper(int argc, char** argv)
             if (apt) {
                 command.insert(command.end() - 2, {"-o", "DPkg::Pre-Install-Pkgs::=" + aptHook.string()});
             }
-            const auto result = runCommand(command,
-                                           [](const std::string& output) { std::cout << output << std::flush; });
+            const auto timeout = packageTimeout();
+            const auto result = runTimedCommand(command, timeout,
+                                                [](const std::string& output) { std::cout << output << std::flush; });
+            if (result.timedOut) {
+                throw std::runtime_error("Package installation exceeded the time limit of " +
+                                         std::to_string(timeout.count()) + " s. The package manager was stopped.");
+            }
             if (!result) {
                 throw std::runtime_error("Package manager failed (exit " + std::to_string(result.exitCode) + ").");
             }
@@ -462,9 +510,14 @@ int runDebInstallHelper(int argc, char** argv)
         if (!installed || trimWhitespace(installed.output) != "install ok installed\n" + version) {
             throw std::runtime_error("Could not verify the installed package version.");
         }
+        stage.preserveForRecovery = false;
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << "\n\n" << debAuditMessage() << '\n';
+        if (stage.preserveForRecovery) {
+            std::cerr << "\nRecovery files kept in " << stage.directory.string()
+                      << ". Review pending-package.json and remove this directory after resolving package state.\n";
+        }
         return 1;
     }
 #else

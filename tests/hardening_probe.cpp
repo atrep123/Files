@@ -45,7 +45,13 @@ int main(int argc, char** argv)
         std::cout << "elapsed(ms)=" << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << '\n';
         return command && command.output == "complete" && elapsed < std::chrono::seconds(1) ? 0 : 1;
     }
-    if (mode == "symlink" || mode == "review" || mode == "install" || mode == "install-failure" || mode == "changed") {
+    if (mode == "reject") {
+        const auto review = inspectDeb(argv[2]);
+        std::cout << review.text << '\n';
+        return !review.installable && !review.package && review.text.find(argv[3]) != std::string::npos ? 0 : 1;
+    }
+    if (mode == "symlink" || mode == "review" || mode == "install" || mode == "install-failure" ||
+        mode == "install-timeout" || mode == "changed") {
         auto review = inspectDeb(argv[2]);
         std::cout << review.text << '\n';
         if (mode == "symlink") {
@@ -74,6 +80,11 @@ int main(int argc, char** argv)
         if (mode == "changed") {
             return result.state == DebInstallState::Failed && result.message.find("changed after review") !=
                    std::string::npos ? 0 : 1;
+        }
+        if (mode == "install-timeout") {
+            return result.state == DebInstallState::Failed &&
+                   result.message.find("Package installation exceeded the time limit of 1 s") != std::string::npos &&
+                   result.message.find("dpkg --audit reported unfinished packages") != std::string::npos ? 0 : 1;
         }
         if (mode == "install-failure") {
             return result.state == DebInstallState::Failed &&

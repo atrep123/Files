@@ -126,6 +126,14 @@ void testDeb(const fs::path& temp)
         std::cout << "dpkg-deb or apt-get is unavailable; only the metadata parser was exercised\n";
         return;
     }
+    const auto oversized = temp / "oversized.deb";
+    std::ofstream(oversized).close();
+    fs::resize_file(oversized, 2ULL * 1024 * 1024 * 1024);
+    const auto rejectedLarge = inspectDeb(oversized);
+    check(!rejectedLarge.installable && !rejectedLarge.package &&
+              rejectedLarge.text.find("64 MiB review limit") != std::string::npos,
+          rejectedLarge.text.c_str());
+
     const auto path = buildDeb(temp / "valid", "all");
     fs::path staged;
     {

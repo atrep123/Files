@@ -82,6 +82,9 @@ std::string stageFile(const fs::path& source, const fs::path& destination, int r
     if (fstat(input.fd, &before) != 0 || !S_ISREG(before.st_mode)) {
         return "Not a regular file";
     }
+    if (const auto error = debStagingError(destination.parent_path(), before.st_size); !error.empty()) {
+        return error;
+    }
     Descriptor output{open(destination.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600)};
     if (output.fd < 0) {
         return std::strerror(errno);
@@ -213,7 +216,7 @@ DebMetadata parseDebInfo(const std::string& output)
 DebInspection inspectDeb(const fs::path& source, uint64_t mountId)
 {
 #if defined(__linux__)
-    std::string temporary = "/tmp/cardputer-files-deb-XXXXXX";
+    std::string temporary = "/var/tmp/cardputer-files-deb-XXXXXX";
     if (!mkdtemp(temporary.data())) {
         return {nullptr, "Cannot prepare package: " + std::string(std::strerror(errno))};
     }

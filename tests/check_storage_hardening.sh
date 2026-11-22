@@ -86,6 +86,17 @@ runuser -u nobody -- "$probe" permission "$tmp/velký soubor" "$tmp/protected"
 "$probe" pipe
 echo "PASS ENOSPC, EROFS, EACCES and pipe drain deadline"
 
+truncate -s 2G "$tmp/oversized.deb"
+"$probe" reject "$tmp/oversized.deb" '64 MiB review limit'
+unshare --mount --propagation private -- bash -ec '
+    mount -t tmpfs -o size=32k tmpfs /var/tmp
+    "$1" reject "$2" "Not enough free space for Debian package staging"
+' _ "$probe" "$tmp/velký soubor"
+echo "PASS sparse 2 GiB archive rejected and staging free space checked"
+
+# Isolate recovery artifacts from the host and retain them through all assertions.
+record_mount /var/tmp -t tmpfs -o mode=1777 tmpfs
+
 for version in 1 2; do
     mkdir -p "$tmp/pkg/DEBIAN" "$tmp/pkg/usr/share/doc/cz-zkouska-files"
     printf 'Package: cz-zkouska-files\nArchitecture: all\nVersion: 1.0.0\nMaintainer: Test <test@example.invalid>\nDescription: Fixture %s\n' "$version" >"$tmp/pkg/DEBIAN/control"
@@ -136,6 +147,13 @@ case "${1:-}" in
         if runuser -u nobody -- test -w "$4"; then exit 25; fi
         printf 'dpkg %s\n' "$*" >>"$TEST_LOG"
         touch "$TEST_DIR/running"
+        if [ -n "${TEST_TIMEOUT:-}" ]; then
+            touch "$TEST_DIR/broken"
+            (trap '' TERM; exec sleep 60) &
+            echo "$!" >"$TEST_DIR/manager-child"
+            exec >&- 2>&-
+            wait
+        fi
         sleep 1
         if [ -n "${TEST_FAIL:-}" ]; then touch "$TEST_DIR/broken"; echo "fixture postinst failed"; exit 42; fi
         touch "$TEST_DIR/installed"
@@ -225,4 +243,32 @@ echo "PASS Store APT dependencies, conffile flags and archive check"
 TEST_FAIL=1 "$probe" install-failure "$deb" | tee "$tmp/failure.log"
 grep -F 'fixture postinst failed' "$tmp/failure.log"
 grep -F 'dpkg --audit reported unfinished packages' "$tmp/failure.log"
-echo "PASS failed installation audit and recovery guidance"
+recovery_record() {
+    local directory
+    directory=$(sed -n 's/^Recovery files kept in \(\/var\/tmp\/cardputer-files-install-[[:alnum:]]*\)\..*/\1/p' "$1" | sort -u)
+    [[ -n $directory && -f $directory/pending-package.json && -f $directory/package.deb ]]
+    grep -F '"package":"cz-zkouska-files"' "$directory/pending-package.json"
+    grep -F "$(sha256sum "$deb" | cut -d ' ' -f 1)" "$directory/pending-package.json"
+    cmp "$directory/package.deb" "$deb"
+}
+recovery_record "$tmp/failure.log"
+echo "PASS failed Store installation retained its recovery record and reviewed archive"
+
+rm -- "$appdir/bin/M5CardputerZero-AppStore" "$tmp/broken"
+SECONDS=0
+M5APPSTORE_PACKAGE_TIMEOUT=1 TEST_TIMEOUT=1 "$probe" install-timeout "$deb" | tee "$tmp/timeout.log"
+[[ $SECONDS -lt 8 ]]
+child=$(cat "$tmp/manager-child")
+if [[ -r /proc/$child/stat ]]; then
+    read -r _ _ state _ </proc/"$child"/stat || state=Z
+    [[ $state == Z ]]
+fi
+recovery_record "$tmp/timeout.log"
+echo "PASS direct install deadline after output closed, process group stopped and recovery retained"
+
+rm -- "$tmp/broken"
+"$probe" install "$deb"
+shopt -s nullglob
+stages=(/var/tmp/cardputer-files-install-*)
+[[ ${#stages[@]} -eq 2 ]]
+echo "PASS successful install cleaned its own stage and kept both earlier recovery records"
