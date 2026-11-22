@@ -233,6 +233,8 @@ void testLoop(const fs::path& mount, const fs::path& temp)
     const FileEntry remote = *browser.selectedEntry();
     check(remote.mountId == root.mountId && !remote.mountRoot, "file should retain removable mount identity");
     check(static_cast<bool>(browser.goBack()) && browser.inLocations(), "drive Escape must return to locations");
+    check(browser.selectedEntry() && browser.selectedEntry()->mountId == root.mountId,
+          "returning from a drive should keep that drive selected");
     check(static_cast<bool>(browser.goBack()) && browser.currentDirectory().get() == temp.string(),
           "locations Escape must return to the folder");
     copied = browser.copyEntryTo(remote, temp.string());

@@ -264,22 +264,16 @@ DebInstallResult installDeb(const PreparedDeb& package, std::string& password, c
     const bool suppliedPassword = !password.empty();
     if (suppliedPassword) {
         password += '\n';
-    }
-    update("Checking sudo authorization...\n");
-    const auto auth = suppliedPassword
-        ? runCommand({"/usr/bin/sudo", "-S", "-p", "", "-v"}, {}, password)
-        : runCommand({"/usr/bin/sudo", "-n", "-v"});
-    if (!auth) {
-        if (auth.exitCode < 0) {
-            return commandFailure("Could not start sudo", auth);
-        }
-        const bool retry = auth.output.find("password") != std::string::npos ||
-                           auth.output.find("Sorry") != std::string::npos;
-        if (!retry) {
+        update("Checking sudo authorization...\n");
+        const auto auth = runCommand({"/usr/bin/sudo", "-S", "-p", "", "-v"}, {}, password);
+        if (!auth) {
+            const bool retry = auth.exitCode == 1 && (auth.output.find("password") != std::string::npos ||
+                                                      auth.output.find("Sorry") != std::string::npos);
+            if (retry) {
+                return {DebInstallState::AuthenticationFailed, "System password required"};
+            }
             return commandFailure("Sudo authorization failed", auth);
         }
-        return {suppliedPassword ? DebInstallState::AuthenticationFailed : DebInstallState::PasswordRequired,
-                "System password required"};
     }
 
     // Store uses dpkg when dependencies are already met, and apt-get to resolve them otherwise.
@@ -292,18 +286,20 @@ DebInstallResult installDeb(const PreparedDeb& package, std::string& password, c
         static_cast<bool>(runCommand({"/usr/bin/dpkg-checkbuilddeps", "-d", dependencies, "/dev/null"}));
     const std::vector<std::string> dpkg{"/usr/bin/dpkg", "--install", package.path.string()};
     const auto& command = installedDependencies ? dpkg : apt;
-    std::vector<std::string> elevated{"/usr/bin/sudo"};
-    if (suppliedPassword) {
-        elevated.insert(elevated.end(), {"-S", "-p", ""});
-    } else {
-        elevated.push_back("-n");
-    }
-    elevated.push_back("--");
+    // Forward only the package command. Its stdin never receives the password.
+    clearSecret(password);
+    std::vector<std::string> elevated{"/usr/bin/sudo", "-n", "--"};
     elevated.insert(elevated.end(), command.begin(), command.end());
     update("Installing " + metadata.name + "...\n");
-    const auto result = runCommand(elevated, progress, password);
-    clearSecret(password);
+    const auto result = runCommand(elevated, progress);
     if (!result) {
+        // The password policy for sudo -v can differ from that for this command.
+        const std::string output = trim(result.output);
+        const std::string passwordRequired = "sudo: a password is required";
+        if (!suppliedPassword && result.exitCode == 1 &&
+            (output == passwordRequired || output.find("\n" + passwordRequired) != std::string::npos)) {
+            return {DebInstallState::PasswordRequired, "System password required"};
+        }
         return commandFailure("Package installation failed", result);
     }
     const std::string queryName = metadata.architecture == "all" ? metadata.name

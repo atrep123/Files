@@ -178,7 +178,7 @@ void FileBrowserModel::refresh(bool preserveSelected)
     (void)refreshSelecting(preferredPath);
 }
 
-void FileBrowserModel::showLocations(bool rememberDirectory)
+void FileBrowserModel::showLocations(bool rememberDirectory, const std::string& preferredPath)
 {
     if (!inLocations() && rememberDirectory) {
         const auto* selected = selectedEntry();
@@ -188,7 +188,7 @@ void FileBrowserModel::showLocations(bool rememberDirectory)
     if (!inLocations()) {
         _current_directory.set("");
         _status.set("Ready");
-        refreshLocations(std::string{});
+        refreshLocations(preferredPath);
     }
 }
 
@@ -400,8 +400,7 @@ FileOperationResult FileBrowserModel::goBack()
     if (!_history.empty()) {
         const HistoryEntry previous = _history.back();
         if (previous.directory.empty()) {
-            showLocations(false);
-            refreshLocations(previous.selectedPath);
+            showLocations(false, previous.selectedPath);
             _history.pop_back();
             return {};
         }

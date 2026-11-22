@@ -38,7 +38,7 @@ public:
     FileEntry entryWithMetadata(const FileEntry& entry) const;
     bool canGoBack() const;
     bool inLocations() const { return _current_directory.get().empty(); }
-    void showLocations(bool rememberDirectory = true);
+    void showLocations(bool rememberDirectory = true, const std::string& preferredPath = {});
     void refreshLocations();
     FileOperationResult ejectSelected();
     void refresh(bool preserveSelected = true);
