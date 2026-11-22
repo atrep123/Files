@@ -960,4 +960,14 @@ void MagicView::tick(uint32_t nowMs)
     }
 }
 
+bool MagicView::active() const
+{
+    return _impl->active;
+}
+
+void MagicView::stop()
+{
+    if (_impl->active) _impl->hide();
+}
+
 }  // namespace files

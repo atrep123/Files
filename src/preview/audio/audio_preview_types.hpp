@@ -9,6 +9,7 @@ enum class AudioPlaybackState {
     Stopped,
     Playing,
     Paused,
+    Error,
 };
 
 struct AudioPreviewFile {
@@ -25,6 +26,8 @@ inline const char* audioPlaybackStateName(AudioPlaybackState state)
             return "Playing";
         case AudioPlaybackState::Paused:
             return "Paused";
+        case AudioPlaybackState::Error:
+            return "Error";
         default:
             return "Unknown";
     }

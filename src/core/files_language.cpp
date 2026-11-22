@@ -125,7 +125,10 @@ std::string localizedMessage(std::string_view message)
         {"Folder contains a mounted filesystem", "Složka obsahuje připojený souborový systém"},
         {"Already at Places", "Už jste v Umístěních"},
         {"Already here", "Položka už je tady"}, {"Folder not found", "Složka nenalezena"},
-        {"Permission denied", "Přístup odepřen"}, {"Name already exists", "Název už existuje"},
+        {"Permission denied", "Přístup odepřen"},
+        {"Enter a file name.", "Zadejte název souboru."},
+        {"Enter a folder name.", "Zadejte název složky."},
+        {"Move cancelled", "Přesun zrušen"}, {"Copy cancelled", "Kopírování zrušeno"}, {"Name already exists", "Název už existuje"},
         {"Invalid name", "Neplatný název"}, {"No preview available", "Náhled není dostupný"},
         {"No preview", "Náhled není dostupný"}, {"Read failed", "Čtení se nezdařilo"},
         {"Drive disconnected", "Disk odpojen"}, {"USB drive not connected", "USB disk není připojen"},
@@ -145,8 +148,11 @@ std::string localizedMessage(std::string_view message)
         if (message == en) return std::string(cs);
     }
     static constexpr std::pair<std::string_view, std::string_view> prefixes[] = {
+        {"Created copy ", "Vytvořena kopie "},
+        {"Clipboard: ", "Ve schránce: "}, {"Clipboard for move: ", "K přesunu: "},
+        {"Renamed to ", "Přejmenováno na "},
         {"Copied ", "Zkopírováno "}, {"Cut ", "Vyjmuto "}, {"Moved ", "Přesunuto "},
-        {"Renamed ", "Přejmenováno "}, {"Deleted ", "Smazáno "}, {"Created ", "Vytvořeno "},
+        {"Renamed ", "Přejmenováno "}, {"Deleted ", "Smazáno "}, {"Created ", "Složka vytvořena: "},
         {"Unmounting ", "Odpojuji "}, {"Powering off ", "Vypínám "}, {"Could not unmount ", "Nelze odpojit "},
         {"Package installation failed", "Instalace balíčku selhala"}, {"Sudo authorization failed", "Ověření sudo selhalo"}, {"Installed ", "Nainstalováno "},
         {"Unsupported architecture: ", "Nepodporovaná architektura: "},

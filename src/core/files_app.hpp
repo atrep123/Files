@@ -101,6 +101,7 @@ private:
     void hideExitHint();
     void releaseEscPress();
     bool browserEscapeHandledByView();
+    bool canHoldEscToExit();
     static void onRouteChanged(void* context, const PageId& page);
     static void onKeyboardEvent(lv_event_t* event);
 #if LV_USE_SDL

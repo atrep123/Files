@@ -22,7 +22,6 @@ enum class BrowserAction {
     Eject,
     NewFolder,
     Language,
-    Exit,
     SystemLanguage,
     English,
     Czech,
@@ -42,6 +41,10 @@ struct PackageDialog {
     std::string metadata;
     bool rootScripts = false;
     bool move = false;
+    std::string fixedStatus;
+    std::string maskedPassword;
+    std::optional<unsigned> progress;
+    bool cancelling = false;
 };
 
 struct VolumeNotice {
@@ -74,12 +77,15 @@ public:
     bool modalInputActive() const
     {
         return _action_menu_open.get() || _pending_delete.get().active ||
-               _pending_rename.get().active || packageDialogOpen();
+               _pending_rename.get().active || packageDialogOpen() || _magic.get();
     }
     bool canEject() const;
     bool languageMenu() const { return _language_menu; }
     std::string directoryTitle();
     std::string directoryCaption();
+    std::string menuContext() const;
+    bool volumeActionShown() const { return _volume_notice.get().connectedMountId != 0; }
+    void clearStatus() { status().set(""); }
     std::vector<BrowserAction> availableActions() const;
     bool inPlaces() const { return _model.browser().inPlaces(); }
 
@@ -195,6 +201,11 @@ private:
     uint64_t _transfer_destination_mount_id = 0;
     std::string _transfer_source_name;
     std::string _transfer_destination_name;
+    std::string _transfer_destination_caption;
+    std::string _package_source_name;
+    std::string _package_file_name;
+    std::string transferProgress(uint64_t bytes) const;
+    void markCancelling(PackageDialog& dialog) const;
     uint64_t _eject_mount_id = 0;
     std::string _eject_name;
     smooth_ui_toolkit::SingleObservable<VolumeNotice> _volume_notice{VolumeNotice{}};
@@ -207,6 +218,7 @@ private:
     int _held_selection_direction  = 0;
     uint32_t _next_selection_at_ms = 0;
     uint32_t _magic_count          = 0;
+    uint32_t _magic_serial         = 0;
 
     bool _language_menu = false;
     void startTransfer();

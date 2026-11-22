@@ -1,3 +1,4 @@
+#include "core/files_language.hpp"
 #ifdef FILES_LAYOUT_AUDIT
 #include "layout_audit/layout_audit.hpp"
 #endif
@@ -20,7 +21,7 @@
 namespace files {
 namespace {
 
-constexpr int32_t kTitleWidth              = 304;
+constexpr int32_t kTitleWidth              = 252;
 constexpr int32_t kTitleY                  = 2;
 constexpr int32_t kWaveformWidth           = 280;
 constexpr int32_t kWaveformHeight          = 60;
@@ -47,7 +48,7 @@ constexpr int32_t kProgressBarY            = 106;
 constexpr int32_t kProgressBarWidth        = 280;
 constexpr int32_t kProgressBarHeight       = 5;
 constexpr int32_t kProgressBarRadius       = 2;
-constexpr uint32_t kProgressTrackColor     = 0x2F2F2F;
+constexpr uint32_t kProgressTrackColor     = ui::black;
 constexpr uint32_t kProgressFillColor      = ui::accent;
 constexpr int32_t kTimeLabelY              = 117;
 constexpr int32_t kTimeLabelWidth          = 96;
@@ -280,12 +281,13 @@ public:
         _track->setBgColor(lv_color_hex(kProgressTrackColor));
         _track->setBgOpa(LV_OPA_COVER);
         _track->setRadius(kProgressBarRadius);
-        _track->setBorderWidth(0);
+        _track->setBorderWidth(1);
+        lv_obj_set_style_border_color(_track->raw_ptr(), lv_color_hex(ui::secondary), 0);
         _track->setShadowWidth(0);
         _track->setPaddingAll(0);
         _track->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
-        _fill->setSize(0, kProgressBarHeight);
+        _fill->setSize(0, kProgressBarHeight - 2);
         _fill->setPos(0, 0);
         _fill->setBgColor(lv_color_hex(kProgressFillColor));
         _fill->setBgOpa(LV_OPA_COVER);
@@ -299,7 +301,7 @@ public:
     void setProgress(float progressSec, float durationSec)
     {
         const float ratio = durationSec <= 0.0f ? 0.0f : std::clamp(progressSec / durationSec, 0.0f, 1.0f);
-        _fill->setWidth(static_cast<int32_t>(std::round(ratio * kProgressBarWidth)));
+        _fill->setWidth(static_cast<int32_t>(std::round(ratio * (kProgressBarWidth - 2))));
     }
 
 private:
@@ -336,7 +338,9 @@ void AudioPreviewView::attach(lv_obj_t* parent)
     _title_label->setTextAlign(LV_TEXT_ALIGN_LEFT);
     _title_label->setLongMode(LV_LABEL_LONG_MODE_CLIP);
     _title_label->setSize(kTitleWidth, LV_SIZE_CONTENT);
-    _title_label->align(LV_ALIGN_TOP_MID, 0, kTitleY);
+    _title_label->setPos(8, kTitleY);
+    _speed_label = ui::label(_root->raw_ptr(), 268, 2, 44, uiFont12(), ui::secondary);
+    lv_obj_set_style_text_align(_speed_label, LV_TEXT_ALIGN_RIGHT, 0);
 
     _waveform = std::make_unique<WaveformView>(_root->raw_ptr());
 
@@ -366,6 +370,11 @@ void AudioPreviewView::attach(lv_obj_t* parent)
     _remaining_label->setSize(kTimeLabelWidth, LV_SIZE_CONTENT);
     _remaining_label->setPos(kProgressBarX + kProgressBarWidth - kTimeLabelWidth, kTimeLabelY);
 
+    _error_panel = ui::box(_root->raw_ptr(), 0, 20, 320, 130, ui::black);
+    auto* title = ui::label(_error_panel, 8, 52, 304, uiFont14(), ui::error);
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(title, local("× Cannot play audio", "× Zvuk nelze přehrát"));
+    ui::hidden(_error_panel, true);
     _key_bar = std::make_unique<BottomKeyBar>(_root->raw_ptr());
 
     _view_model.state().observe(this, onStateChanged);
@@ -393,6 +402,7 @@ void AudioPreviewView::detach()
     _playhead.reset();
     _waveform.reset();
     _title_label.reset();
+    _speed_label = _error_panel = nullptr;
     _root.reset();
 }
 
@@ -410,6 +420,8 @@ void AudioPreviewView::renderState(AudioPlaybackState state)
     if (_waveform) {
         _waveform->setPlaying(state == AudioPlaybackState::Playing);
     }
+    ui::hidden(_error_panel, state != AudioPlaybackState::Error);
+    ui::hidden(_speed_label, state == AudioPlaybackState::Error);
     updateKeyBar();
 }
 
@@ -443,7 +455,7 @@ void AudioPreviewView::renderProgress(float progressSec)
 
 void AudioPreviewView::renderSpeed(float speed)
 {
-    (void)speed;
+    if (_speed_label) lv_label_set_text_fmt(_speed_label, "%d×", static_cast<int>(speed));
     updateKeyBar();
 }
 
@@ -453,6 +465,10 @@ void AudioPreviewView::updateKeyBar()
         return;
     }
 
+    if (_view_model.state().get() == AudioPlaybackState::Error) {
+        _key_bar->setItems({});
+        return;
+    }
     _key_bar->setItems({
         {'5', &image_icon_playback_replay},
         {'6', _view_model.state().get() == AudioPlaybackState::Playing ? &image_icon_playback_pause

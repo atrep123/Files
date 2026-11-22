@@ -209,7 +209,11 @@ public:
     void attach(lv_obj_t* parent) override
     {
         _root = ui::box(parent, 0, 0, 320, 170, ui::black);
-        ui::caption(_root, 0, _title, uiFont14());
+        auto* header = ui::caption(_root, 0, _title, uiFont14());
+        _heading = lv_obj_get_child(header, 0);
+        _state = ui::label(header, 214, 2, 98, uiFont12());
+        lv_obj_set_style_text_align(_state, LV_TEXT_ALIGN_RIGHT, 0);
+        ui::hidden(_state, true);
 #if FILES_USE_SDL
         _image = lv_image_create(_root);
         lv_obj_set_pos(_image, 2, 20);
@@ -226,6 +230,9 @@ public:
         _status = ui::label(_root, 8, 72, 304, uiFont14());
         lv_obj_set_style_text_align(_status, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text(_status, local("Opening video…", "Otevírám video…"));
+        _detail = ui::label(_root, 8, 94, 304, uiFont12());
+        lv_obj_set_style_text_align(_detail, LV_TEXT_ALIGN_CENTER, 0);
+        ui::hidden(_detail, true);
         _keys = lv_obj_get_child(ui::caption(_root, 150, ""), 0);
         lv_obj_set_width(_keys, 252);
         refreshKeys();
@@ -246,6 +253,9 @@ public:
             router.back();
             return;
         }
+#if FILES_USE_SDL
+        if (!_frame_ready) return;
+#endif
         if (key == ' ') {
             togglePause();
             refreshKeys();
@@ -293,6 +303,9 @@ private:
     lv_obj_t* _root = nullptr;
     lv_obj_t* _status = nullptr;
     lv_obj_t* _keys = nullptr;
+    lv_obj_t* _heading = nullptr;
+    lv_obj_t* _state = nullptr;
+    lv_obj_t* _detail = nullptr;
 
 #if FILES_USE_SDL
     lv_obj_t* _image = nullptr;
@@ -301,6 +314,7 @@ private:
     std::array<uint8_t, kVideoWidth * kVideoHeight * 2> _buffer{};
     size_t _received = 0;
     int _pipe = -1;
+    bool _frame_ready = false;
 
     void readFrame()
     {
@@ -315,6 +329,10 @@ private:
         ui::hidden(_image, false);
         ui::hidden(_status, true);
         lv_obj_invalidate(_image);
+        if (!_frame_ready) {
+            _frame_ready = true;
+            refreshKeys();
+        }
     }
 
     void closePipe()
@@ -327,10 +345,20 @@ private:
 
     void refreshKeys()
     {
-        const auto hint = keyHints({_failed ? "" : (_paused ? local("Space Play", "Mezera Hrát") :
-                                                            local("Space Pause", "Mezera Pauza")),
-                                    _failed ? "" : "Z← C→", local("Esc Back", "Esc Zpět")}, {}, 252);
-        lv_label_set_text(_keys, hint.c_str());
+        bool ready = !_failed && !_finished;
+#if FILES_USE_SDL
+        ready = ready && _frame_ready;
+#endif
+        const bool paused = ready && _paused;
+        ui::hidden(_state, !paused);
+        lv_label_set_text(_state, local("Ⅱ Paused", "Ⅱ Pauza"));
+        lv_obj_set_width(_heading, paused ? 200 : 304);
+        ui::line(_heading, _title, paused ? 200 : 304, uiFont14(), std::string::npos, true);
+        const auto hint = keyHints({ready ? (paused ? local("Space Play", "Mezera Hrát") :
+                                                     local("Space Pause", "Mezera Pauza")) : "",
+                                    ready ? local("Z← C→ Seek", "Z← C→ Posun") : "",
+                                    local("Esc Back", "Esc Zpět")}, {}, 252);
+        ui::keyLegend(_keys, hint);
     }
 
     void showFailure()
@@ -340,7 +368,9 @@ private:
 #if FILES_USE_SDL
         ui::hidden(_image, true);
 #endif
-        lv_label_set_text(_status, local("Video unavailable", "Video není dostupné"));
+        lv_label_set_text(_status, local("× Cannot play video", "× Video nelze přehrát"));
+        lv_label_set_text(_detail, local("Decoding failed.", "Chyba dekódování."));
+        ui::hidden(_detail, false);
         lv_obj_set_style_text_color(_status, lv_color_hex(ui::error), 0);
         ui::hidden(_status, false);
         refreshKeys();

@@ -295,9 +295,8 @@ bool FilesApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
             _esc_pressed       = true;
             _esc_pressed_at    = lv_tick_get();
             _esc_long_consumed = false;
-            _esc_exit_armed =
-                _router.page() == PageId::Browser && !_browser_vm.canGoBack() && !browserEscapeHandledByView();
-            if (_esc_exit_armed) {
+            _esc_exit_armed = canHoldEscToExit();
+            if (_esc_exit_armed && !_browser_vm.actionMenuOpen().get()) {
                 showExitHint();
             }
         } else if (!pressed && _esc_pressed) {
@@ -472,8 +471,7 @@ bool FilesApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
 void FilesApp::tick(uint32_t nowMs)
 {
     _browser_vm.pollVolumes(nowMs);
-    if (_esc_exit_armed && (_router.page() != PageId::Browser || _help_active || _browser_vm.canGoBack() ||
-                            browserEscapeHandledByView())) {
+    if (_esc_exit_armed && !canHoldEscToExit()) {
         _esc_exit_armed = false;
         hideExitHint();
     }
@@ -518,11 +516,13 @@ void FilesApp::showHelpPage()
         "F↑ X↓ Move · Enter Open\n"
         "Tab Menu · U USB · E Eject\n"
         "Esc Back · Hold Esc Exit\n"
-        "PgUp/PgDn Page · .deb Review",
+        "PgUp/PgDn Page\n"
+        "Enter on .deb · Review package",
         "F↑ X↓ Pohyb · Enter Otevřít\n"
         "Tab Nabídka · U USB · E Vysunout\n"
         "Esc Zpět · Podržet Esc Ukončit\n"
-        "PgUp/PgDn Listovat · Náhled .deb"));
+        "PgUp/PgDn Listovat\n"
+        "Enter na .deb: Náhled"));
     if (!_help_page) {
         spdlog::error("FilesApp: failed to create help page");
         return;
@@ -555,11 +555,11 @@ void FilesApp::createVolumeNotice()
 #ifdef FILES_LAYOUT_AUDIT
     lv_obj_add_flag(_volume_notice, layout_audit::overlay_flag);
 #endif
-    _preview_usb_hint = ui::label(lv_layer_top(), 268, 152, 44, uiFont12());
+    _preview_usb_hint = ui::label(lv_layer_top(), 222, 152, 90, uiFont12());
     lv_obj_set_style_bg_color(_preview_usb_hint, lv_color_hex(ui::bar), 0);
     lv_obj_set_style_bg_opa(_preview_usb_hint, LV_OPA_COVER, 0);
     lv_obj_set_style_text_align(_preview_usb_hint, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_label_set_text(_preview_usb_hint, "U USB");
+    ui::keyLegend(_preview_usb_hint, local("U Open USB", "U Otevřít USB"));
     ui::hidden(_preview_usb_hint, true);
     _browser_vm.volumeNotice().observe(this, onVolumeNoticeChanged);
 }
@@ -576,6 +576,7 @@ void FilesApp::updateVolumeNoticeVisibility()
     const bool showUsb = _browser_vm.hasRemovableVolumes() &&
                          (_help_active || _router.page() == PageId::Preview) && !hostRenderingSuspended();
     if (showUsb) {
+        ui::keyLegend(_preview_usb_hint, local("U Open USB", "U Otevřít USB"));
         lv_obj_remove_flag(_preview_usb_hint, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(_preview_usb_hint, LV_OBJ_FLAG_HIDDEN);
@@ -585,16 +586,24 @@ void FilesApp::updateVolumeNoticeVisibility()
                          !hostRenderingSuspended();
     const bool wasHidden = lv_obj_has_flag(_volume_notice, LV_OBJ_FLAG_HIDDEN);
     ui::hidden(_volume_notice, !visible);
+    const bool browsing = _router.page() == PageId::Browser;
     if (visible) {
-        const int y = _router.page() == PageId::Browser ? _browser_view.toastY(notice.duration() == 5000 ? 42 : 24) :
-                      (notice.duration() == 5000 ? 108 : 126);
-        if (_notice_text != notice.text || _notice_y != y || wasHidden) {
-            _notice_text = notice.text;
+        auto text = notice.text;
+        if (!browsing && notice.connectedMountId) {
+            if (const auto split = text.find('\n'); split != std::string::npos) text.resize(split);
+        }
+        const int height = text.find('\n') == std::string::npos ? 24 : 42;
+        const int y = browsing ? _browser_view.toastY(height) : 150 - height;
+        if (browsing) _browser_view.setExternalToast(y, height);
+        if (_notice_text != text || _notice_y != y || wasHidden) {
+            _notice_text = text;
             _notice_y = y;
-            ui::toast(_volume_notice, notice.text, y, notice.tone == DialogTone::Success ? ui::success :
+            ui::toast(_volume_notice, text, y, notice.tone == DialogTone::Success ? ui::success :
                       notice.tone == DialogTone::Warning ? ui::warning : ui::white);
             lv_obj_move_foreground(_volume_notice);
         }
+    } else if (browsing) {
+        _browser_view.setExternalToast();
     }
 }
 
@@ -642,6 +651,13 @@ void FilesApp::releaseEscPress()
     _esc_long_consumed = false;
     _esc_exit_armed    = false;
     _esc_pressed_at    = 0;
+}
+
+bool FilesApp::canHoldEscToExit()
+{
+    if (_router.page() != PageId::Browser || _help_active) return false;
+    if (_browser_vm.actionMenuOpen().get() && !_browser_vm.packageDialogOpen() && !textInputFocused()) return true;
+    return !_browser_vm.canGoBack() && !browserEscapeHandledByView();
 }
 
 bool FilesApp::browserEscapeHandledByView()

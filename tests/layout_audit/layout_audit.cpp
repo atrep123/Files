@@ -167,6 +167,19 @@ void add_text(json& data, lv_obj_t* obj, Rect content, Rect clip, Rect fixed_cli
             source.append(displayed + label->dot_begin + overwritten);
         }
     }
+    if (label->recolor) {
+        for (size_t i = 0; (i = source.find('#', i)) != std::string::npos;) {
+            const auto close = source.find('#', i + 1);
+            if (close == std::string::npos || close < i + 8 || source[i + 7] != ' ') {
+                ++i;
+                continue;
+            }
+            source.erase(close, 1);
+            source.erase(i, 8);
+            i = close - 8;
+        }
+        displayed = source.c_str();
+    }
     const char* text = source.c_str();
 
     const auto* font = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
@@ -202,7 +215,7 @@ void add_text(json& data, lv_obj_t* obj, Rect content, Rect clip, Rect fixed_cli
         }
     }
 
-    if (drawn.y == font->line_height && !label->recolor) {
+    if (drawn.y == font->line_height) {
         int top = font->line_height;
         int bottom = 0;
         uint32_t pos = 0;

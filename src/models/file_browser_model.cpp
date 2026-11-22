@@ -584,12 +584,12 @@ FileOperationResult FileBrowserModel::transferEntry(const FileEntry& entry, cons
                                                     bool move)
 {
     const auto destinationMountId = destinationDirectory == _current_directory.get() ? _current_mount_id : 0;
-    const auto result = performTransfer(entry, destinationDirectory, destinationMountId, move).operation;
-    if (result) {
-        refresh(false);
-        _status.set(result.message);
+    const auto transfer = performTransfer(entry, destinationDirectory, destinationMountId, move);
+    if (transfer.operation) {
+        refreshSelecting(transfer.destinationPath);
+        _status.set(transfer.operation.message);
     }
-    return result;
+    return transfer.operation;
 }
 
 FileTransferResult FileBrowserModel::performTransfer(const FileEntry& entry, const std::string& destinationDirectory,
@@ -637,7 +637,10 @@ FileTransferResult FileBrowserModel::performTransfer(const FileEntry& entry, con
     } else if (!transfer) {
         result.operation = transferError(move ? "Cut" : "Copy", transfer);
     } else {
-        result.operation = {FileOperationStatus::Ok, std::string(move ? "Moved " : "Copied ") + entry.name};
+        const auto name = transfer.destination.filename();
+        result.destinationPath = pathString(fs::path(destinationDirectory) / name);
+        const auto* verb = move ? "Moved " : name != source.filename() ? "Created copy " : "Copied ";
+        result.operation = {FileOperationStatus::Ok, std::string(verb) + name.string()};
         result.destinationState = internal::TransferDestination::Published;
     }
     return result;
@@ -676,7 +679,6 @@ FileOperationResult FileBrowserModel::renameSelectedTo(const std::string& name)
     if (!internal::volumePresent(selected->mountId)) {
         return disconnected();
     }
-    const std::string oldName = selected->name;
     if (name.empty() || name == "." || name == ".." || name.find('/') != std::string::npos) {
         return errorResult(FileOperationStatus::InvalidSelection, "Invalid name");
     }
@@ -705,7 +707,7 @@ FileOperationResult FileBrowserModel::renameSelectedTo(const std::string& name)
     }
 
     refreshSelecting(pathString(destination));
-    _status.set("Renamed " + oldName);
+    _status.set("Renamed to " + name);
     return FileOperationResult{};
 }
 

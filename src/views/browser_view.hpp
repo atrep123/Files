@@ -17,6 +17,7 @@ public:
     void onExit() override;
     void tick(uint32_t nowMs) override;
     int toastY(int height) const;
+    void setExternalToast(int y = 0, int height = 0);
 
 private:
     class Rows;
@@ -28,6 +29,8 @@ private:
     lv_obj_t* _path = nullptr;
     lv_obj_t* _free = nullptr;
     lv_obj_t* _keys = nullptr;
+    lv_obj_t* _menu_exit = nullptr;
+    lv_obj_t* _no_usb = nullptr;
     lv_obj_t* _toast = nullptr;
     std::unique_ptr<Rows> _files;
     std::unique_ptr<Rows> _actions;
@@ -37,6 +40,9 @@ private:
     uint32_t _toast_started = 0;
     uint32_t _toast_duration = 0;
     bool _usb = false;
+    bool _usb_action = false;
+    int _external_y = 0;
+    int _external_height = 0;
 
     void updateChrome();
     void updateMenu(bool open);

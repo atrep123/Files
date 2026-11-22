@@ -409,6 +409,7 @@ bool AudioPreviewModel::load(const FileEntry& file)
 
     if (!_impl->load(file)) {
         _file.set(AudioPreviewFile{file, 0});
+        _state.set(AudioPlaybackState::Error);
         return false;
     }
 
@@ -421,6 +422,7 @@ bool AudioPreviewModel::load(const FileEntry& file)
 
 void AudioPreviewModel::togglePlayPause()
 {
+    if (_state.get() == AudioPlaybackState::Error) return;
     if (_state.get() == AudioPlaybackState::Playing) {
         pause();
         return;
@@ -428,6 +430,8 @@ void AudioPreviewModel::togglePlayPause()
 
     if (_impl->play()) {
         _state.set(AudioPlaybackState::Playing);
+    } else {
+        _state.set(AudioPlaybackState::Error);
     }
 }
 
@@ -444,7 +448,7 @@ void AudioPreviewModel::pause()
 
 void AudioPreviewModel::seek(float offsetSec)
 {
-    if (_state.get() == AudioPlaybackState::Stopped && _file.get().entry.path.empty()) {
+    if (_state.get() == AudioPlaybackState::Error || _file.get().entry.path.empty()) {
         return;
     }
 
@@ -459,6 +463,7 @@ void AudioPreviewModel::seek(float offsetSec)
 
 void AudioPreviewModel::toggleSpeed()
 {
+    if (_state.get() == AudioPlaybackState::Error) return;
     float current = _speed.get();
     float next    = 1.0f;
     if (current < 2.0f) {

@@ -144,6 +144,9 @@ public:
         _root->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
         _title_bar = ui::caption(_root->raw_ptr(), 0, _title, uiFont14());
+        _zoom_label = ui::label(_title_bar, 250, 2, 62, uiFont12(), ui::secondary);
+        lv_obj_set_style_text_align(_zoom_label, LV_TEXT_ALIGN_RIGHT, 0);
+        ui::hidden(_zoom_label, true);
 
         _viewport = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Container>(_root->raw_ptr());
         _viewport->setBgColor(lv_color_hex(0x000000));
@@ -189,12 +192,16 @@ public:
         }
 
         _key_bar = std::make_unique<BottomKeyBar>(_root->raw_ptr());
-        _key_bar->setItems({
-            {'4', &image_icon_fullscreen},
-            {'5', &image_icon_zoom_out},
-            {'7', &image_icon_zoom_in},
-            {'8', &image_icon_reset},
-        });
+        if (_preview_loaded) {
+            _key_bar->setItems({
+                {'4', &image_icon_fullscreen},
+                {'5', &image_icon_zoom_out},
+                {'7', &image_icon_zoom_in},
+                {'8', &image_icon_reset},
+            });
+        } else {
+            _key_bar->setItems({});
+        }
 
         fitForCurrentMode();
     }
@@ -212,6 +219,7 @@ public:
 
     void onKey(uint32_t key, FilesRouter& router) override
     {
+        if (!_preview_loaded && key != '\x1b' && key != files_key::Left) return;
         switch (key) {
             case '\x1b':
             case files_key::Left:
@@ -261,6 +269,8 @@ private:
     DrawBufferPtr _bmp_buffer;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _root;
     lv_obj_t* _title_bar = nullptr;
+    lv_obj_t* _zoom_label = nullptr;
+    uint32_t _fit_scale = LV_SCALE_NONE;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _viewport;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Image> _image;
     lv_obj_t* _gif = nullptr;
@@ -299,7 +309,9 @@ private:
 
     void fitForCurrentMode()
     {
-        _scale  = defaultScale();
+        _fit_scale = defaultScale();
+        _scale = _fit_scale;
+        refreshZoom();
         _view_x = 0;
         _view_y = 0;
         applyLayout();
@@ -328,7 +340,18 @@ private:
         // Keep both keys effective when rounding would leave the scale unchanged.
         next   = zoomIn ? std::max(next, _scale + 1) : std::min(next, _scale - 1);
         _scale = std::clamp(next, kMinScale, kMaxScale);
+        refreshZoom();
         applyImageTransform();
+    }
+
+    void refreshZoom()
+    {
+        const bool zoomed = _scale != _fit_scale;
+        auto* title = lv_obj_get_child(_title_bar, 0);
+        lv_obj_set_width(title, zoomed ? 235 : 304);
+        ui::line(title, _title, zoomed ? 235 : 304, uiFont14(), std::string::npos, true);
+        lv_label_set_text_fmt(_zoom_label, "%u%%", (_scale * 100 + _fit_scale / 2) / _fit_scale);
+        ui::hidden(_zoom_label, !zoomed);
     }
 
     void applyLayout()
@@ -344,7 +367,7 @@ private:
             lv_obj_set_style_clip_corner(_viewport->raw_ptr(), false, LV_PART_MAIN);
             ui::hidden(_title_bar, true);
             if (_key_bar) {
-                _key_bar->setItems({});
+                _key_bar->show(false);
             }
         } else {
             _viewport->setPos(kPreviewX, kPreviewY);
@@ -352,7 +375,7 @@ private:
             _viewport->setRadius(0);
             lv_obj_set_style_clip_corner(_viewport->raw_ptr(), false, LV_PART_MAIN);
             ui::hidden(_title_bar, false);
-            if (_key_bar) {
+            if (_key_bar && _preview_loaded) {
                 _key_bar->setItems({
                     {'4', &image_icon_fullscreen},
                     {'5', &image_icon_zoom_out},

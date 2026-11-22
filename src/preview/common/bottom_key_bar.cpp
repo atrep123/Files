@@ -9,7 +9,7 @@ namespace {
 
 const char* keyLabel(const void* icon)
 {
-    if (icon == &image_icon_fullscreen) return local("Full", "Celá");
+    if (icon == &image_icon_fullscreen) return local("Full", "Celý");
     if (icon == &image_icon_zoom_out) return "−";
     if (icon == &image_icon_zoom_in) return "+";
     if (icon == &image_icon_reset) return local("Rotate", "Otočit");
@@ -17,9 +17,7 @@ const char* keyLabel(const void* icon)
     if (icon == &image_icon_playback_forward) return "+10 s";
     if (icon == &image_icon_playback_play) return local("Play", "Hrát");
     if (icon == &image_icon_playback_pause) return local("Pause", "Pauza");
-    if (icon == &image_icon_playback_2x) return "2×";
-    if (icon == &image_icon_playback_5x) return "5×";
-    return "1×";
+    return local("Speed", "Tempo");
 }
 
 }  // namespace
@@ -42,8 +40,13 @@ void BottomKeyBar::setItems(std::initializer_list<Item> items)
         text += keyLabel(item.image);
     }
     const auto keys = keyHints({text, local("Esc Back", "Esc Zpět")}, {}, 252);
-    lv_label_set_text(_label, keys.c_str());
-    ui::hidden(_bar, items.size() == 0);
+    ui::keyLegend(_label, keys);
+    show(true);
+}
+
+void BottomKeyBar::show(bool visible)
+{
+    ui::hidden(_bar, !visible);
 }
 
 }  // namespace files

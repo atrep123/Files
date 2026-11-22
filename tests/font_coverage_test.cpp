@@ -78,14 +78,17 @@ void requireBrowserText()
         lv_point_t size{};
         lv_text_get_size(&size, hint.c_str(), files::uiFont12(), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
         check(size.x <= 304 && files::textLength(hint) <= 44, hint.c_str());
-        check((hint.find("U USB") != std::string::npos) == usb, "U USB must reflect connected drives");
+        check(usb || hint.find("U USB") == std::string::npos, "U USB needs a connected drive");
+        if ((state & 16) != 0) check(hint.find("F↑ X↓") == 0, "movement must be the first shortcut");
     }
     const auto drive = files::browserKeyHint(true, true, true, true, true, false);
-    check(drive.find("E Eject") != std::string::npos && drive.find("U USB") != std::string::npos,
-          "selected drive should offer eject and USB shortcuts");
+    check(drive.find("E Eject") != std::string::npos && drive.find("Enter") != std::string::npos,
+          "selected drive should offer eject and open shortcuts");
     requireGlyph({files::uiFont12(), "footer arrows"}, 0x2191);
     requireGlyph({files::uiFont12(), "footer arrows"}, 0x2193);
     requireGlyph({files::uiFont12(), "footer return"}, 0x21B5);
+    requireGlyph({files::uiFont12(), "toast check mark"}, 0x2713);
+    requireGlyph({files::uiFont12(), "video pause"}, 0x2161);
 }
 
 void requireCzechFilename(Font face)

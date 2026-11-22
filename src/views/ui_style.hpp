@@ -52,11 +52,37 @@ inline void line(lv_obj_t* label, const std::string& text, int width, const lv_f
     lv_label_set_text(label, fitText(text, width, font, limit, extension).c_str());
 }
 
+inline void keyLegend(lv_obj_t* label, std::string_view keys)
+{
+    std::string formatted;
+    while (!keys.empty()) {
+        const auto end = keys.find("  ");
+        const auto item = keys.substr(0, end);
+        const auto space = item.find(' ');
+        if (!formatted.empty()) formatted += "  ";
+        if (space == std::string_view::npos || item == "F↑ X↓" || item == "Z← C→") {
+            formatted += item;
+        } else {
+            const size_t keyEnd = item.rfind("Z← C→ ", 0) == 0 ? item.find(' ', space + 1) : space;
+            formatted += item.substr(0, keyEnd);
+            formatted += " #BDBEBD ";
+            formatted += item.substr(keyEnd + 1);
+            formatted += '#';
+        }
+        if (end == std::string_view::npos) break;
+        keys.remove_prefix(end + 2);
+    }
+    if (formatted == lv_label_get_text(label)) return;
+    lv_label_set_recolor(label, true);
+    lv_label_set_text(label, formatted.c_str());
+}
+
 inline lv_obj_t* caption(lv_obj_t* parent, int y, const std::string& text, const lv_font_t* font = uiFont12())
 {
     auto* strip = box(parent, 0, y, 320, 20, bar);
     auto* content = label(strip, 8, std::max<int>(2, (20 - lv_font_get_line_height(font)) / 2), 304, font);
-    line(content, text, 304, font, y == 150 ? 44 : std::string::npos, y == 0);
+    if (y == 150) keyLegend(content, fitText(text, 304, font, 44));
+    else line(content, text, 304, font, std::string::npos, true);
     return strip;
 }
 
@@ -64,8 +90,17 @@ inline void toast(lv_obj_t* label, std::string_view text, int y, uint32_t color)
 {
     const auto split = text.find('\n');
     const bool twoLines = split != std::string_view::npos;
-    auto first = fitText(std::string(text.substr(0, split)), 296, uiFont12(), 36);
-    if (twoLines) first += "\n" + fitText(std::string(text.substr(split + 1)), 296, uiFont12(), 36);
+    const std::string symbol = color == success ? "✓ " : color == warning ? "! " : "";
+    auto first = fitText(symbol + std::string(text.substr(0, split)), 296, uiFont12(), 36, true);
+    auto* detail = lv_obj_get_child(label, 0);
+    if (twoLines) {
+        if (!detail) {
+            detail = ui::label(label, 0, lv_font_get_line_height(uiFont12()), 296, uiFont12());
+            lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0);
+        }
+        line(detail, std::string(text.substr(split + 1)), 296, uiFont12(), 36);
+    }
+    if (detail) hidden(detail, !twoLines);
     const int height = twoLines ? 42 : 24;
     lv_obj_set_pos(label, 4, y);
     lv_obj_set_size(label, 312, height);

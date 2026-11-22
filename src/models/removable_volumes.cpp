@@ -187,7 +187,7 @@ FileOperationResult ejectVolume(const RemovableVolume& volume, const CommandOutp
         return {FileOperationStatus::Failed, "Drive has multiple mount points"};
     }
     if (progress) {
-        progress("Unmounting " + volume.name + "...");
+        progress("Unmounting " + volume.name + "…");
     }
     const auto unmount = runUdisks("unmount", volume.mount.source);
     if (!unmount || volumePresent(volume.mount.id)) {
@@ -208,7 +208,7 @@ FileOperationResult ejectVolume(const RemovableVolume& volume, const CommandOutp
         }
     }
     if (progress) {
-        progress("Powering off " + volume.name + "...");
+        progress("Powering off " + volume.name + "…");
     }
     const auto power = runUdisks("power-off", volume.disk);
     if (!power) {

@@ -19,6 +19,7 @@ struct VolumeChanges {
 
 struct FileTransferResult {
     FileOperationResult operation;
+    std::string destinationPath;
     internal::TransferDestination destinationState = internal::TransferDestination::NotPublished;
     uint64_t disconnectedSource = 0;
     uint64_t disconnectedDestination = 0;
@@ -62,6 +63,7 @@ public:
     FileOperationResult ejectSelected();
     static FileOperationResult ejectDrive(uint64_t mountId, const internal::CommandOutput& progress = {});
     uint64_t currentMountId() const { return _current_mount_id; }
+    FileOperationResult refreshSelecting(const std::string& preferredPath);
     static FileTransferResult performTransfer(const FileEntry& entry, const std::string& destinationDirectory,
                                                uint64_t destinationMountId, bool move,
                                                internal::TransferControl* control = nullptr);
@@ -101,7 +103,7 @@ private:
     void setEntries(std::vector<FileEntry> entries, const std::string& preferredPath);
     void refreshPlaces(const std::string& preferredPath);
     FileOperationResult transferEntry(const FileEntry& entry, const std::string& destinationDirectory, bool move);
-    FileOperationResult refreshSelecting(const std::string& preferredPath);
+
     FileOperationResult goToDirectory(const std::string& path, bool pushHistory, const std::string& preferredPath);
 };
 

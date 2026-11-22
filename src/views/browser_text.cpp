@@ -68,6 +68,17 @@ std::string fitText(std::string text, int width, const lv_font_t* font, size_t l
     return build(left, right);
 }
 
+std::string fitPath(std::string_view path, int width, const lv_font_t* font)
+{
+    if (textWidth(path, font) <= width) return std::string(path);
+    for (size_t slash = path.find('/'); slash != std::string_view::npos; slash = path.find('/', slash + 1)) {
+        const auto tail = "…" + std::string(path.substr(slash));
+        if (textWidth(tail, font) <= width) return tail;
+    }
+    const auto slash = path.rfind('/');
+    return fitText(std::string(slash == std::string_view::npos ? path : path.substr(slash + 1)), width, font);
+}
+
 std::string browserRowText(const FileEntry& entry, int width)
 {
     const auto name = entry.name.empty() ? local("(unnamed)", "(bez názvu)") : entry.name;
@@ -95,18 +106,24 @@ std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, boo
     const auto* open = local("Enter Open", "Enter Otevřít");
     const auto* back = local("Esc Back", "Esc Zpět");
     const auto* actions = local("Tab Menu", "Tab Nabídka");
-    const auto* ejectHint = local("E Eject", "E Vysunout");
+    const auto* ejectHint = eject ? local("E Eject", "E Vysunout") : "";
     const auto* movement = canMove ? "F↑ X↓" : "";
     const auto* usbHint = usb ? "U USB" : "";
-    if (menu) return keyHints({movement, local("Enter Select", "Enter Vybrat"), back, usbHint}, {eject ? ejectHint : ""});
-    if (eject) {
-        const auto keys = keyHints({selected ? open : "", ejectHint, actions, usbHint}, {movement, back});
-        if (usb && keys.find(usbHint) == std::string::npos)
-            return keyHints({selected ? "Enter ↵" : "", ejectHint, actions, usbHint}, {movement, back});
-        return keys;
+    if (menu) return keyHints({movement, local("Enter Select", "Enter Vybrat"), back}, {ejectHint, usbHint});
+    if (places) {
+        if (eject) {
+            return keyHints({movement, inCzech() ? "Enter ↵" : open, ejectHint, actions}, {usbHint});
+        }
+        return keyHints({movement, selected ? open : "", actions}, {usbHint});
     }
-    if (usb) return keyHints({movement, selected ? "Enter ↵" : "", actions, back, usbHint}, {});
-    return keyHints({movement, selected ? open : "", actions, places ? "" : back}, {});
+    if (eject) {
+        return keyHints({movement, selected ? "Enter ↵" : "", ejectHint, back}, {actions, usbHint});
+    }
+    auto keys = keyHints({movement, selected ? open : "", actions, back}, {usbHint});
+    if (usb && keys.find(usbHint) == std::string::npos) {
+        keys = keyHints({movement, selected ? "Enter ↵" : "", actions, back}, {usbHint});
+    }
+    return keys;
 }
 
 }  // namespace files

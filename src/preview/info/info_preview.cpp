@@ -54,17 +54,19 @@ public:
 #endif
         lv_obj_set_scroll_dir(_body, LV_DIR_VER);
         lv_obj_set_scrollbar_mode(_body, LV_SCROLLBAR_MODE_AUTO);
+        lv_obj_set_style_pad_right(_body, 2, LV_PART_SCROLLBAR);
         lv_obj_set_style_width(_body, 3, LV_PART_SCROLLBAR);
         lv_obj_set_style_bg_color(_body, lv_color_hex(ui::secondary), LV_PART_SCROLLBAR);
         lv_obj_set_style_bg_opa(_body, LV_OPA_COVER, LV_PART_SCROLLBAR);
 
-        auto* name = ui::label(_body, 8, 4, 300, uiFont14());
+        auto* name = ui::label(_body, 8, 0, 300, uiFont14());
+        lv_obj_set_style_text_line_space(name, 17 - lv_font_get_line_height(uiFont14()), 0);
         lv_label_set_text(name, _file.name.c_str());
         lv_obj_update_layout(_body);
-        const int y = lv_obj_get_height(name) + 10;
-        auto* fields = ui::label(_body, 8, y, 107, uiFont12(), ui::secondary);
+        const int y = (lv_obj_get_height(name) + 16) / 17 * 17;
+        auto* fields = ui::label(_body, 8, y, 69, uiFont12(), ui::secondary);
         lv_label_set_text(fields, local("Kind\nSize\nModified\nHidden\nPath", "Typ\nVelikost\nZměněno\nSkrytý\nCesta"));
-        auto* values = ui::label(_body, 116, y, 191, uiMonoFont12());
+        auto* values = ui::label(_body, 80, y, 227, uiMonoFont12());
         const std::string details = std::string(kindText(_file.kind)) + "\n" +
                                     (_file.directory ? "–" : sizeInUnits(_file.size)) + "\n" +
                                     modifiedText(_file.modifiedUnixSec) + "\n" +
@@ -72,8 +74,30 @@ public:
         lv_label_set_text(values, details.c_str());
         lv_obj_set_style_text_line_space(fields, 17 - lv_font_get_line_height(uiFont12()), 0);
         lv_obj_set_style_text_line_space(values, 17 - lv_font_get_line_height(uiMonoFont12()), 0);
-        auto* path = ui::label(_body, 116, y + 69, 191, uiMonoFont12(), ui::secondary);
-        lv_label_set_text(path, _file.path.c_str());
+        auto* path = ui::label(_body, 8, y + 85, 300, uiMonoFont12(), ui::secondary);
+        lv_obj_set_style_text_line_space(path, 17 - lv_font_get_line_height(uiMonoFont12()), 0);
+        std::string wrapped;
+        std::string current;
+        size_t start = 0;
+        while (start < _file.path.size()) {
+            const auto slash = _file.path.find('/', start);
+            const auto end = slash == std::string::npos ? _file.path.size() : slash + 1;
+            const auto component = _file.path.substr(start, end - start);
+            if (!current.empty() && textWidth(current + component, uiMonoFont12()) > 300) {
+                wrapped += current + "\n";
+                current.clear();
+            }
+            current += component;
+            start = end;
+        }
+        wrapped += current;
+        lv_label_set_text(path, wrapped.c_str());
+        // Pad the scroll extent to the same grid as the visible rows.
+        lv_obj_set_height(_body, 119);
+        lv_obj_update_layout(_body);
+        const int bottom = lv_obj_get_y(path) + lv_obj_get_height(path);
+        auto* extent = ui::box(_body, 0, (bottom + 16) / 17 * 17 - 1, 1, 1, ui::black);
+        lv_obj_set_style_bg_opa(extent, LV_OPA_TRANSP, 0);
         lv_obj_update_layout(_body);
         ui::caption(_root, 150, keyHints({lv_obj_get_scroll_bottom(_body) > 0 ? "F↑ X↓" : "",
                                          local("Esc Back", "Esc Zpět")}, {}));

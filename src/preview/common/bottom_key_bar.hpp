@@ -12,6 +12,7 @@ public:
     explicit BottomKeyBar(lv_obj_t* parent);
     ~BottomKeyBar();
     void setItems(std::initializer_list<Item> items);
+    void show(bool visible);
 
 private:
     lv_obj_t* _bar;

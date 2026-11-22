@@ -326,7 +326,11 @@ DebInstallResult installDeb(const PreparedDeb& package, std::string& password, c
                                                                   : package.planError};
     }
     if (!trustedSystemExecutable(debHelperExecutable)) {
-        return {DebInstallState::Failed, "The installed Files package helper is missing or its path is writable."};
+        std::error_code error;
+        const auto status = fs::symlink_status(debHelperExecutable, error);
+        const bool missing = error == std::errc::no_such_file_or_directory || status.type() == fs::file_type::not_found;
+        return {DebInstallState::Failed, missing ? "The Files installer helper is missing." :
+                                                  "The installer helper path has unsafe permissions."};
     }
     const auto update = [&](const auto& message) {
         if (progress) {

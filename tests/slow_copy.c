@@ -14,6 +14,8 @@ static void slow(int fd)
     if (count <= 0) return;
     path[count] = 0;
     if (!strstr(path, ".files-transfer-")) return;
+    const char *after = getenv("FILES_COPY_SLOW_AFTER");
+    if (after && lseek(fd, 0, SEEK_CUR) < atoll(after)) return;
     if (__atomic_exchange_n(&slowed, 1, __ATOMIC_SEQ_CST)) return;
     FILE *marker = fopen(getenv("FILES_COPY_MARKER"), "w");
     if (marker) fclose(marker);
