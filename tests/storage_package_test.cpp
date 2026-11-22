@@ -137,7 +137,11 @@ void testDeb(const fs::path& temp)
     const auto path = buildDeb(temp / "valid", "all");
     fs::path staged;
     {
-        auto review = inspectDeb(path);
+        std::string earlyDetails;
+        auto review = inspectDeb(path, 0, [&](const std::string& details) { earlyDetails = details; });
+        check(earlyDetails.find("Depends: None") != std::string::npos &&
+                  earlyDetails.find("extra text") != std::string::npos,
+              "package metadata must be available before the install plan");
         check(review.installable && review.package != nullptr, review.text.c_str());
         check(review.text.find("Depends: None") != std::string::npos &&
                   review.text.find("extra text\n\nafter a blank line") != std::string::npos,
@@ -224,13 +228,17 @@ void testDisconnectDuringCopy(const fs::path& mount, const fs::path& temp)
 
 void testLoop(const fs::path& mount, const fs::path& temp)
 {
-    FileBrowserModel browser(temp.string());
+    FileBrowserModel browser(temp.string(), {});
     std::ofstream(temp / "na disk č. 1.txt") << "written from local storage\n";
     std::ofstream(mount / "z disku č. 2.txt") << "written from mounted image\n";
     browser.refresh();
     selectByName(browser, "na disk č. 1.txt");
     const FileEntry local = *browser.selectedEntry();
-    browser.showLocations();
+    const auto arrival = browser.updateVolumes(removableVolumes());
+    check(std::any_of(arrival.arrived.begin(), arrival.arrived.end(), [&](const auto& drive) {
+        return drive.mount.target == mount;
+    }), "hotplug did not report the loop image");
+    browser.showPlaces();
     selectByName(browser, mount.filename().string());
     const FileEntry root = *browser.selectedEntry();
     check(root.mountRoot && root.mountId && !root.freeSpace.empty(), "drive should show a name and free space");
@@ -241,17 +249,37 @@ void testLoop(const fs::path& mount, const fs::path& temp)
     selectByName(browser, "z disku č. 2.txt");
     const FileEntry remote = *browser.selectedEntry();
     check(remote.mountId == root.mountId && !remote.mountRoot, "file should retain removable mount identity");
-    check(static_cast<bool>(browser.goBack()) && browser.inLocations(), "drive Escape must return to locations");
+    check(static_cast<bool>(browser.goBack()) && browser.inPlaces(), "drive Escape must return to Places");
     check(browser.selectedEntry() && browser.selectedEntry()->mountId == root.mountId,
           "returning from a drive should keep that drive selected");
-    check(static_cast<bool>(browser.goBack()) && browser.currentDirectory().get() == temp.string(),
-          "locations Escape must return to the folder");
+    check(!browser.canGoBack(), "Places must be the navigation root");
     copied = browser.copyEntryTo(remote, temp.string());
     check(static_cast<bool>(copied) && fs::exists(temp / "z disku č. 2.txt"), copied.message.c_str());
+
+    check(static_cast<bool>(browser.openVolume(root.mountId)), "could not open the drive from hotplug");
+    check(fs::create_directory(mount / "Podadresář"), "could not create test subdirectory");
+    browser.refresh();
+    selectByName(browser, "Podadresář");
+    check(static_cast<bool>(browser.openSelected()), "could not open drive subdirectory");
+    check(static_cast<bool>(browser.goBack()) && browser.currentDirectory().get() == mount.string() &&
+              static_cast<bool>(browser.goBack()) && browser.inPlaces(), "nested Esc must walk back to Places");
+
+    const auto moveSource = temp / "přesunutý soubor.txt";
+    std::ofstream(moveSource) << "move across filesystems\n";
+    files::FileEntry toMove;
+    toMove.path = moveSource.string();
+    toMove.name = moveSource.filename().string();
+    const auto moved = browser.moveEntryTo(toMove, mount.string());
+    check(static_cast<bool>(moved) && !fs::exists(moveSource) && fs::exists(mount / moveSource.filename()),
+          moved.message.c_str());
+    check(static_cast<bool>(browser.openVolume(root.mountId)), "could not reopen the drive before removal");
 
     // The caller owns the temporary loop mount, allowing an actual dismount after Files releases its descriptors.
     const auto detached = runCommand({"/usr/bin/umount", mount.string()});
     check(static_cast<bool>(detached), detached.output.c_str());
+    const auto departure = browser.updateVolumes(removableVolumes());
+    check(departure.leftVolume && departure.removed.size() == 1 && browser.inPlaces(),
+          "unmount must report the removal and return active browsing to Places");
     std::ofstream(mount / "z disku č. 2.txt") << "underlying path; must not be copied\n";
     const auto lost = browser.copyEntryTo(remote, temp.string());
     check(!lost && lost.message == "Drive disconnected" && !fs::exists(temp / "z disku č. 2 copy.txt"),

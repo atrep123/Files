@@ -41,7 +41,8 @@ struct DebInstallResult {
 };
 
 DebMetadata parseDebInfo(const std::string& output);
-DebInspection inspectDeb(const std::filesystem::path& source, uint64_t mountId = 0);
+DebInspection inspectDeb(const std::filesystem::path& source, uint64_t mountId = 0,
+                         const CommandOutput& metadataReady = {});
 DebInstallResult installDeb(const PreparedDeb& package, std::string& password, const CommandOutput& progress);
 std::string cleanCommandText(std::string text);
 

@@ -140,9 +140,13 @@ FileOperationResult transferError(const char* operation, const internal::Filesys
 
 }  // namespace
 
-FileBrowserModel::FileBrowserModel(std::string start_directory)
-    : _current_directory(normalizeDirectoryPath(start_directory.empty() ? defaultStartDirectory() : start_directory))
+FileBrowserModel::FileBrowserModel(std::string start_directory, std::vector<internal::RemovableVolume> volumes)
+    : _current_directory(normalizeDirectoryPath(start_directory.empty() ? defaultStartDirectory() : start_directory)),
+      _volumes(std::move(volumes))
 {
+    if (!_volumes.empty()) {
+        showPlaces();
+    }
 }
 
 const FileEntry* FileBrowserModel::selectedEntry() const
@@ -164,47 +168,84 @@ FileEntry FileBrowserModel::entryWithMetadata(const FileEntry& entry) const
 
 bool FileBrowserModel::canGoBack() const
 {
-    if (inLocations() || !_history.empty()) {
-        return true;
-    }
-
-    const fs::path current = fs::path(_current_directory.get());
-    const fs::path parent  = current.parent_path();
-    return !parent.empty() && parent != current;
+    return !inPlaces();
 }
 
 void FileBrowserModel::refresh(bool preserveSelected)
 {
-    if (inLocations()) {
-        refreshLocations();
-        return;
-    }
-    const FileEntry* selected       = selectedEntry();
-    const std::string preferredPath = preserveSelected && selected ? selected->path : "";
-    (void)refreshSelecting(preferredPath);
-}
-
-void FileBrowserModel::showLocations(bool rememberDirectory, const std::string& preferredPath)
-{
-    if (!inLocations() && rememberDirectory) {
-        const auto* selected = selectedEntry();
-        _history.push_back({_current_directory.get(), selected ? selected->path : "", _current_mount_id});
-    }
-    _current_mount_id = 0;
-    if (!inLocations()) {
-        _current_directory.set("");
-        _status.set("Ready");
-        refreshLocations(preferredPath);
-    }
-}
-
-void FileBrowserModel::refreshLocations()
-{
     const auto* selected = selectedEntry();
-    refreshLocations(selected ? selected->path : "");
+    const std::string preferredPath = preserveSelected && selected ? selected->path : "";
+    if (inPlaces()) {
+        refreshPlaces(preferredPath);
+    } else {
+        (void)refreshSelecting(preferredPath);
+    }
 }
 
-void FileBrowserModel::refreshLocations(const std::string& preferredPath)
+void FileBrowserModel::showPlaces(const std::string& preferredPath)
+{
+    _history.clear();
+    _current_mount_id = 0;
+    _current_directory.set("");
+    _status.set("Ready");
+    refreshPlaces(preferredPath);
+}
+
+const internal::RemovableVolume* FileBrowserModel::volume(uint64_t mountId) const
+{
+    const auto it = std::find_if(_volumes.begin(), _volumes.end(), [mountId](const auto& item) {
+        return item.mount.id == mountId;
+    });
+    return it == _volumes.end() ? nullptr : &*it;
+}
+
+VolumeChanges FileBrowserModel::updateVolumes(std::vector<internal::RemovableVolume> volumes)
+{
+    const auto contains = [](const auto& list, const auto& item) {
+        return std::any_of(list.begin(), list.end(), [&item](const auto& other) {
+            return item.mount.id == other.mount.id && item.mount.target == other.mount.target &&
+                   item.mount.deviceNumber == other.mount.deviceNumber;
+        });
+    };
+
+    VolumeChanges changes;
+    for (const auto& item : volumes) {
+        if (!contains(_volumes, item)) {
+            changes.arrived.push_back(item);
+        }
+    }
+    for (const auto& item : _volumes) {
+        if (!contains(volumes, item)) {
+            changes.removed.push_back(item);
+            changes.leftVolume |= item.mount.id == _current_mount_id;
+        }
+    }
+    _volumes = std::move(volumes);
+
+    // Navigation can reach a recently mounted drive before the next poll.
+    if (changes.leftVolume || (_current_mount_id && !volume(_current_mount_id))) {
+        changes.leftVolume = true;
+        showPlaces();
+    } else if (inPlaces()) {
+        refresh();
+    }
+    return changes;
+}
+
+FileOperationResult FileBrowserModel::openVolume(uint64_t mountId)
+{
+    const auto* drive = volume(mountId);
+    if (!drive || !internal::volumePresent(mountId)) {
+        return disconnected();
+    }
+    auto result = goToDirectory(drive->mount.target.string(), false);
+    if (result) {
+        _history.clear();
+    }
+    return result;
+}
+
+void FileBrowserModel::refreshPlaces(const std::string& preferredPath)
 {
     std::vector<FileEntry> list;
     const auto addLocation = [&list](const fs::path& path, std::string name) -> FileEntry& {
@@ -217,16 +258,16 @@ void FileBrowserModel::refreshLocations(const std::string& preferredPath)
         list.push_back(std::move(entry));
         return list.back();
     };
-    if (const auto* user = getpwuid(getuid()); user && user->pw_dir && std::string(user->pw_dir) != "/") {
-        addLocation(user->pw_dir, "Home");
-    }
-    addLocation("/", "File system");
-    for (const auto& volume : internal::removableVolumes()) {
+    for (const auto& volume : _volumes) {
         auto& entry = addLocation(volume.mount.target, volume.name);
         entry.mountId = volume.mount.id;
         entry.mountRoot = true;
         entry.freeSpace = freeSpace(volume.mount.target);
     }
+    if (const auto* user = getpwuid(getuid()); user && user->pw_dir) {
+        addLocation(user->pw_dir, "Home");
+    }
+    addLocation("/", "File system");
     const auto& previous = _entries.get();
     if (previous.size() != list.size() ||
         !std::equal(list.begin(), list.end(), previous.begin(), [](const auto& a, const auto& b) {
@@ -243,6 +284,7 @@ FileOperationResult FileBrowserModel::ejectSelected()
         return errorResult(FileOperationStatus::InvalidSelection, "Select a removable drive");
     }
     const auto result = ejectDrive(entry->mountId);
+    updateVolumes(internal::removableVolumes());
     refresh(true);
     return result;
 }
@@ -302,7 +344,7 @@ FileOperationResult FileBrowserModel::refreshSelecting(const std::string& prefer
         }
     }
     if (!internal::volumePresent(_current_mount_id)) {
-        showLocations(false);
+        showPlaces();
         _status.set("Drive disconnected");
         return disconnected();
     }
@@ -404,14 +446,27 @@ FileOperationResult FileBrowserModel::openSelected(FileEntry* openedFile)
 
 FileOperationResult FileBrowserModel::goBack()
 {
+    if (inPlaces()) {
+        return errorResult(FileOperationStatus::NotSupported, "Already at Places");
+    }
+    if (!internal::volumePresent(_current_mount_id)) {
+        showPlaces();
+        return disconnected();
+    }
+
+    const fs::path current(_current_directory.get());
+    const auto* drive = volume(_current_mount_id);
+    if ((drive && current == drive->mount.target) || current == current.root_path()) {
+        showPlaces(current.string());
+        return {};
+    }
     while (!_history.empty() && !internal::volumePresent(_history.back().mountId)) {
         _history.pop_back();
     }
     if (!_history.empty()) {
         const HistoryEntry previous = _history.back();
         if (previous.directory.empty()) {
-            showLocations(false, previous.selectedPath);
-            _history.pop_back();
+            showPlaces(previous.selectedPath);
             return {};
         }
         const FileOperationResult result = goToDirectory(previous.directory, false, previous.selectedPath);
@@ -420,16 +475,7 @@ FileOperationResult FileBrowserModel::goBack()
         }
         return result;
     }
-    if (inLocations()) {
-        return goToDirectory(defaultStartDirectory(), false);
-    }
-
-    fs::path current(_current_directory.get());
-    const fs::path parent = current.parent_path();
-    if (parent.empty() || parent == current) {
-        return errorResult(FileOperationStatus::NotSupported, "Already at root");
-    }
-    return goToDirectory(pathString(parent), false, pathString(current));
+    return goToDirectory(pathString(current.parent_path()), false, pathString(current));
 }
 
 FileOperationResult FileBrowserModel::goToDirectory(const std::string& path, bool pushHistory)
@@ -557,7 +603,7 @@ FileOperationResult FileBrowserModel::renameSelectedTo(const std::string& name)
     if (!selected) {
         return errorResult(FileOperationStatus::InvalidSelection, "No file selected");
     }
-    if (inLocations() || selected->mountRoot) {
+    if (inPlaces() || selected->mountRoot) {
         return errorResult(FileOperationStatus::NotSupported, "Cannot rename a location");
     }
     if (!internal::volumePresent(selected->mountId)) {
@@ -603,7 +649,7 @@ FileOperationResult FileBrowserModel::deleteSelected()
         return errorResult(FileOperationStatus::InvalidSelection, "No file selected");
     }
 
-    if (inLocations() || selected->mountRoot) {
+    if (inPlaces() || selected->mountRoot) {
         return errorResult(FileOperationStatus::NotSupported, "Cannot delete a location");
     }
     if (!internal::volumePresent(selected->mountId)) {

@@ -6,7 +6,7 @@ File browser and preview app for M5Stack CardputerZero.
 
 - Browse folders with animated file menu and long-name scrolling
 - Copy, cut, paste, rename, delete, and inspect file metadata
-- Browse mounted removable drives and safely eject them from Locations
+- Browse mounted removable drives and safely eject them from Places
 - Review and install local Debian packages after confirmation
 - Preview text files with CJK-capable Noto Sans fonts and scroll progress
 - Preview images with pan, zoom, counter-clockwise rotation, fullscreen, and GIF support
@@ -134,11 +134,13 @@ Key controls:
 - Audio preview: `5` back 10s, `6` play/pause, `7` forward 10s, `8` speed, Esc/Left back
 - Video preview: Space pause/resume, Left/Right seek, Esc back
 
-On Linux, choose **Tab → Locations** to see Home, the file system and mounted
-removable drives with their available space. Open the drive to copy or paste as
-in any other folder. To disconnect it, select the drive in Locations and choose
-**Tab → Eject**. Files uses `udisksctl` for unmounting and powers off a USB device
-when its other volumes are no longer mounted. The OS mounts the drives.
+On Linux, Files starts at **Places** if a removable drive is mounted. Places
+shows drives and their available space above Home and File system. You can
+reach it with **Esc** or **Tab → Places**. Hold **Esc** at Places to exit.
+When a drive appears while Files is open, press **Enter** during the notification
+to open it. To disconnect a drive, select it in Places and press **E**, or choose
+**Tab → Eject** from inside the drive, then confirm. Files uses `udisksctl` to
+unmount the drive and power off USB devices when safe.
 
 Open a `.deb` with **Enter**, scroll the package details with **F/X** or the
 arrow keys, and press **Enter** to install the reviewed package. **Esc** cancels

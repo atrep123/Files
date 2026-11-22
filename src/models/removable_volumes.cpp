@@ -191,16 +191,20 @@ FileOperationResult ejectVolume(const RemovableVolume& volume, const CommandOutp
     }
     const auto unmount = runUdisks("unmount", volume.mount.source);
     if (!unmount || volumePresent(volume.mount.id)) {
+        if (unmount.output.find("DeviceBusy") != std::string::npos ||
+            unmount.output.find("target is busy") != std::string::npos) {
+            return {FileOperationStatus::Failed, volume.name + " is in use. Close open files and try again."};
+        }
         return ejectError("Could not unmount " + volume.name, unmount);
     }
     if (!volume.powerOff) {
-        return {FileOperationStatus::Ok, "Unmounted " + volume.name};
+        return {FileOperationStatus::Ok, "You can unplug " + volume.name + " now."};
     }
 
     for (const auto& mount : currentMounts()) {
         const auto block = blockPath("/sys", mount);
         if (!block.empty() && (fs::path("/dev") / diskPath(block).filename()) == volume.disk) {
-            return {FileOperationStatus::Ok, "Unmounted. Other volumes are still mounted."};
+            return {FileOperationStatus::Failed, "Other volumes on " + volume.name + " are still mounted."};
         }
     }
     if (progress) {
@@ -210,7 +214,7 @@ FileOperationResult ejectVolume(const RemovableVolume& volume, const CommandOutp
     if (!power) {
         return ejectError("Unmounted. Could not power off " + volume.name, power);
     }
-    return {FileOperationStatus::Ok, "Safe to remove " + volume.name};
+    return {FileOperationStatus::Ok, "You can unplug " + volume.name + " now."};
 }
 
 }  // namespace files::internal

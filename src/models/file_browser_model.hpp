@@ -11,9 +11,16 @@
 
 namespace files {
 
+struct VolumeChanges {
+    std::vector<internal::RemovableVolume> arrived;
+    std::vector<internal::RemovableVolume> removed;
+    bool leftVolume = false;
+};
+
 class FileBrowserModel {
 public:
-    explicit FileBrowserModel(std::string start_directory = {});
+    explicit FileBrowserModel(std::string start_directory = {},
+                              std::vector<internal::RemovableVolume> volumes = internal::removableVolumes());
 
     smooth_ui_toolkit::SingleObservable<std::string>& currentDirectory()
     {
@@ -38,9 +45,11 @@ public:
     const FileEntry* selectedEntry() const;
     FileEntry entryWithMetadata(const FileEntry& entry) const;
     bool canGoBack() const;
-    bool inLocations() const { return _current_directory.get().empty(); }
-    void showLocations(bool rememberDirectory = true, const std::string& preferredPath = {});
-    void refreshLocations();
+    bool inPlaces() const { return _current_directory.get().empty(); }
+    void showPlaces(const std::string& preferredPath = {});
+    VolumeChanges updateVolumes(std::vector<internal::RemovableVolume> volumes);
+    FileOperationResult openVolume(uint64_t mountId);
+    const internal::RemovableVolume* volume(uint64_t mountId) const;
     FileOperationResult ejectSelected();
     static FileOperationResult ejectDrive(uint64_t mountId, const internal::CommandOutput& progress = {});
     uint64_t currentMountId() const { return _current_mount_id; }
@@ -75,11 +84,12 @@ private:
     smooth_ui_toolkit::SingleObservable<std::string> _status{""};
     std::vector<HistoryEntry> _history;
     uint64_t _current_mount_id = 0;
+    std::vector<internal::RemovableVolume> _volumes;
 
     FileEntry makeEntry(const std::filesystem::directory_entry& item, bool includeMetadata) const;
     FileOperationResult readDirectoryEntries(const std::string& directory, std::vector<FileEntry>& entries) const;
     void setEntries(std::vector<FileEntry> entries, const std::string& preferredPath);
-    void refreshLocations(const std::string& preferredPath);
+    void refreshPlaces(const std::string& preferredPath);
     FileOperationResult transferEntry(const FileEntry& entry, const std::string& destinationDirectory, bool move);
     FileOperationResult refreshSelecting(const std::string& preferredPath);
     FileOperationResult goToDirectory(const std::string& path, bool pushHistory, const std::string& preferredPath);

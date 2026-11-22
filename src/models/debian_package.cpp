@@ -213,7 +213,7 @@ DebMetadata parseDebInfo(const std::string& output)
     return metadata;
 }
 
-DebInspection inspectDeb(const fs::path& source, uint64_t mountId)
+DebInspection inspectDeb(const fs::path& source, uint64_t mountId, const CommandOutput& metadataReady)
 {
 #if defined(__linux__)
     std::string temporary = "/var/tmp/cardputer-files-deb-XXXXXX";
@@ -250,11 +250,14 @@ DebInspection inspectDeb(const fs::path& source, uint64_t mountId)
         metadata.architecture.empty() || metadata.description.empty()) {
         return {nullptr, "Invalid Debian package metadata"};
     }
+    std::string details = debDetails(metadata);
+    if (metadataReady) {
+        metadataReady(details);
+    }
     const auto contents = readSnapshot(reviewed.fd, {"/usr/bin/dpkg-deb", "--contents", "-"}, false);
     if (!contents) {
         return {nullptr, "Damaged Debian package\n\n" + cleanCommandText(contents.output)};
     }
-    std::string details = debDetails(metadata);
     if (!supportedArchitecture(metadata.architecture)) {
         return {std::move(package), "Unsupported architecture: " + metadata.architecture + "\n\n" + details, false};
     }
@@ -274,13 +277,14 @@ DebInspection inspectDeb(const fs::path& source, uint64_t mountId)
         const auto error = package->planError;
         return {std::move(package), details + "\n\n" + error, false};
     }
-    details = "Installation can run package scripts as root.\n"
-              "Keep local configuration (dpkg --force-confdef --force-confold).\n\n" +
-              details + "\n\nAPT plan (simulation)\n" + cleanCommandText(plan);
+    details = "Installation can run package scripts as root.\n\n" + details +
+              "\n\nKeep local configuration (dpkg --force-confdef --force-confold)."
+              "\n\nAPT plan (simulation)\n" + cleanCommandText(plan);
     return {std::move(package), std::move(details), true};
 #else
     (void)source;
     (void)mountId;
+    (void)metadataReady;
     return {nullptr, "Debian packages require a Debian-compatible Linux system"};
 #endif
 }

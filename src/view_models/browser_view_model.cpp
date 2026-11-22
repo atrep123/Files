@@ -9,6 +9,8 @@ namespace {
 
 constexpr uint32_t kHoldRepeatDelayMs = 320;
 constexpr uint32_t kHoldRepeatMs      = 90;
+constexpr uint32_t kVolumePollMs      = 750;
+constexpr uint32_t kVolumeNoticeMs    = 5000;
 // Leave one row of context when paging through the five-row browser window.
 constexpr int kBrowserPageStep = 4;
 
@@ -122,6 +124,12 @@ void BrowserViewModel::onKey(uint32_t key)
         case '\t':
             openActionMenu();
             break;
+        case 'e':
+        case 'E':
+            if (canEjectFromPlaces()) {
+                requestEject();
+            }
+            break;
         case ' ':
             if (canGenerateMagic()) {
                 ++_magic_count;
@@ -182,10 +190,6 @@ void BrowserViewModel::tick(uint32_t nowMs)
         tickPackage(nowMs);
         return;
     }
-    if (_model.browser().inLocations() && !_action_menu_open.get() && nowMs - _last_locations_check >= 1000) {
-        _last_locations_check = nowMs;
-        _model.browser().refreshLocations();
-    }
     if (_pending_delete.get().active || _pending_rename.get().active) {
         clearHeldSelection();
         return;
@@ -202,6 +206,115 @@ void BrowserViewModel::tick(uint32_t nowMs)
     }
 }
 
+void BrowserViewModel::showVolumeNotice(VolumeNotice notice)
+{
+    if (_volume_notice.get().text.empty()) {
+        _notice_started_at = _last_tick;
+        _volume_notice.set(std::move(notice));
+    } else {
+        _queued_notices.push_back(std::move(notice));
+    }
+}
+
+void BrowserViewModel::advanceVolumeNotice()
+{
+    _notice_started_at = _last_tick;
+    if (_queued_notices.empty()) {
+        _volume_notice.set({});
+    } else {
+        _volume_notice.set(std::move(_queued_notices.front()));
+        _queued_notices.pop_front();
+    }
+}
+
+bool BrowserViewModel::handleVolumeNotice(uint32_t key)
+{
+    const auto mountId = _volume_notice.get().openMountId;
+    if (!mountId || (key != '\r' && key != '\n' && key != '\x1b')) {
+        return false;
+    }
+    advanceVolumeNotice();
+    if (key != '\x1b') {
+        clearHeldSelection();
+        const auto result = _model.browser().openVolume(mountId);
+        if (!result) {
+            showVolumeNotice({result.message});
+        } else if (_router.page() == PageId::Preview) {
+            _router.back();
+        }
+    }
+    return true;
+}
+
+void BrowserViewModel::pollVolumes(uint32_t nowMs, bool helpActive)
+{
+    // Only advertise Enter while it can open the drive.
+    if (_volume_notice.get().openMountId && (helpActive || modalInputActive())) {
+        _notice_started_at += nowMs - _last_tick;
+    }
+    _last_tick = nowMs;
+    if (nowMs - _last_volume_check >= kVolumePollMs) {
+        _last_volume_check = nowMs;
+        const auto changes = _model.browser().updateVolumes(internal::removableVolumes());
+        if (changes.leftVolume || (_model.browser().inPlaces() &&
+                                   (!changes.removed.empty() || !changes.arrived.empty()))) {
+            clearHeldSelection();
+            if (_action_menu_open.get()) {
+                closeActionMenu();
+            }
+        }
+        if (changes.leftVolume) {
+            const bool editing = _pending_delete.get().active || _pending_rename.get().active;
+            if (editing) {
+                cancelDelete();
+                cancelRename();
+                _package_dialog.set({PackageDialogMode::Result, "File operation cancelled", "Drive disconnected"});
+            }
+            if (_router.page() == PageId::Preview) {
+                _router.back();
+            }
+        }
+
+        for (const auto& drive : changes.removed) {
+            const auto id = drive.mount.id;
+            _queued_notices.erase(std::remove_if(_queued_notices.begin(), _queued_notices.end(),
+                [id](const auto& notice) { return notice.openMountId == id; }), _queued_notices.end());
+        }
+        for (const auto& drive : changes.removed) {
+            const auto id = drive.mount.id;
+            const auto mode = _package_dialog.get().mode;
+            if (id == _package_source_mount_id &&
+                (mode == PackageDialogMode::Review || mode == PackageDialogMode::Password)) {
+                _prepared_deb.reset();
+                internal::clearSecret(_package_password);
+                _package_dialog.set({PackageDialogMode::Result, "Debian package", "Drive disconnected"});
+            }
+            if (_volume_notice.get().openMountId == id) {
+                advanceVolumeNotice();
+            }
+            if (id != _eject_mount_id || _package_dialog.get().mode != PackageDialogMode::Ejecting) {
+                showVolumeNotice({drive.name + " removed"});
+            }
+        }
+        for (const auto& drive : changes.arrived) {
+            showVolumeNotice({"USB disk " + drive.name + " connected — Enter: open", drive.mount.id});
+        }
+        if (_package_dialog.get().mode == PackageDialogMode::ConfirmEject && !_model.browser().volume(_eject_mount_id)) {
+            _eject_mount_id = 0;
+            _package_dialog.set({PackageDialogMode::Result, "Eject drive", "Drive disconnected"});
+        }
+    }
+    if (!_volume_notice.get().text.empty() && nowMs - _notice_started_at >= kVolumeNoticeMs) {
+        advanceVolumeNotice();
+    }
+}
+
+bool BrowserViewModel::canEjectFromPlaces() const
+{
+    const auto* entry = selectedEntry();
+    return _model.browser().inPlaces() && entry && entry->mountRoot;
+}
+
 const FileEntry* BrowserViewModel::selectedEntry() const
 {
     return _model.browser().selectedEntry();
@@ -210,20 +323,23 @@ const FileEntry* BrowserViewModel::selectedEntry() const
 std::vector<BrowserAction> BrowserViewModel::availableActions() const
 {
     const auto* entry = selectedEntry();
-    if (_model.browser().inLocations()) {
+    if (_model.browser().inPlaces()) {
         if (!entry) {
             return {};
         }
-        return entry->mountRoot ? std::vector<BrowserAction>{BrowserAction::Open, BrowserAction::Eject}
+        return entry->mountRoot ? std::vector<BrowserAction>{BrowserAction::Eject, BrowserAction::Open}
                                 : std::vector<BrowserAction>{BrowserAction::Open};
     }
     if (entry && entry->mountRoot) {
-        return {BrowserAction::Open, BrowserAction::Eject, BrowserAction::Locations};
+        return {BrowserAction::Eject, BrowserAction::Open, BrowserAction::Places};
     }
 
     std::vector<BrowserAction> actions;
+    if (_model.browser().currentMountId()) {
+        actions.push_back(BrowserAction::Eject);
+    }
     if (entry) {
-        actions = {BrowserAction::Open, BrowserAction::Info, BrowserAction::Copy, BrowserAction::Cut};
+        actions.insert(actions.end(), {BrowserAction::Open, BrowserAction::Info, BrowserAction::Copy, BrowserAction::Cut});
     }
     if (_pending_copy.active) {
         actions.push_back(BrowserAction::Paste);
@@ -231,7 +347,7 @@ std::vector<BrowserAction> BrowserViewModel::availableActions() const
     if (entry) {
         actions.insert(actions.end(), {BrowserAction::Rename, BrowserAction::Delete});
     }
-    actions.push_back(BrowserAction::Locations);
+    actions.push_back(BrowserAction::Places);
     return actions;
 }
 
@@ -279,7 +395,7 @@ void BrowserViewModel::copySelectedToCurrentDirectory()
 void BrowserViewModel::copySelected()
 {
     const FileEntry* selected = selectedEntry();
-    if (!selected || selected->mountRoot || _model.browser().inLocations()) {
+    if (!selected || selected->mountRoot || _model.browser().inPlaces()) {
         return;
     }
 
@@ -290,7 +406,7 @@ void BrowserViewModel::copySelected()
 void BrowserViewModel::cutSelected()
 {
     const FileEntry* selected = selectedEntry();
-    if (!selected || selected->mountRoot || _model.browser().inLocations()) {
+    if (!selected || selected->mountRoot || _model.browser().inPlaces()) {
         return;
     }
 
@@ -466,27 +582,40 @@ void BrowserViewModel::activateSelectedAction()
         case BrowserAction::Delete:
             requestDeleteSelected();
             break;
-        case BrowserAction::Locations:
+        case BrowserAction::Places:
             closeActionMenu();
-            _model.browser().showLocations();
+            _model.browser().showPlaces();
             break;
         case BrowserAction::Eject:
             closeActionMenu();
-            startEject();
+            requestEject();
             break;
     }
 }
 
-void BrowserViewModel::startEject()
+void BrowserViewModel::requestEject()
 {
     const auto* entry = selectedEntry();
-    if (!entry || !entry->mountRoot) {
+    auto mountId = _model.browser().currentMountId();
+    if (!mountId && entry && entry->mountRoot) {
+        mountId = entry->mountId;
+    }
+    const auto* drive = _model.browser().volume(mountId);
+    if (!drive) {
+        status().set("Drive disconnected");
         return;
     }
     clearHeldSelection();
-    _eject_progress = "Checking " + entry->name + "...";
+    _eject_mount_id = mountId;
+    _eject_name = drive->name;
+    _package_dialog.set({PackageDialogMode::ConfirmEject, "Eject drive", "Eject " + _eject_name + "?"});
+}
+
+void BrowserViewModel::startEject()
+{
+    _eject_progress = "Checking " + _eject_name + "...";
     _package_dialog.set({PackageDialogMode::Ejecting, "Eject drive", _eject_progress});
-    _storage_operation = std::async(std::launch::async, [this, mountId = entry->mountId] {
+    _storage_operation = std::async(std::launch::async, [this, mountId = _eject_mount_id] {
         return FileBrowserModel::ejectDrive(mountId, [this](const std::string& message) {
             std::lock_guard<std::mutex> lock(_eject_mutex);
             _eject_progress = message;
@@ -507,8 +636,21 @@ void BrowserViewModel::tickStorage(uint32_t nowMs)
         }
         const bool cancelled = transfer && _transfer_control->cancelled();
         _transfer_control.reset();
-        _model.browser().refresh(!transfer);
-        status().set(result.message);
+        if (transfer) {
+            _model.browser().refresh(false);
+            if (result || cancelled) {
+                status().set(result.message);
+            }
+        } else {
+            // Reconcile the drive before unlocking input, suppressing a duplicate removal notice.
+            _last_volume_check = nowMs - kVolumePollMs;
+            pollVolumes(nowMs);
+            _model.browser().refresh();
+            _eject_mount_id = 0;
+            if (result) {
+                showVolumeNotice({result.message});
+            }
+        }
         if (result && transfer && _pending_copy.cut) {
             _pending_copy = {};
         }
@@ -542,9 +684,14 @@ void BrowserViewModel::startPackageRead(const FileEntry& entry)
 {
     clearHeldSelection();
     _password_attempts = 0;
-    _package_dialog.set({PackageDialogMode::Reading, "Debian package", "Reading package..."});
-    _package_read = std::async(std::launch::async, [path = entry.path, mountId = entry.mountId] {
-        return internal::inspectDeb(path, mountId);
+    _package_source_mount_id = entry.mountId;
+    _package_log = "Reading package...";
+    _package_dialog.set({PackageDialogMode::Reading, "Debian package", _package_log});
+    _package_read = std::async(std::launch::async, [this, path = entry.path, mountId = entry.mountId] {
+        return internal::inspectDeb(path, mountId, [this](const std::string& details) {
+            std::lock_guard<std::mutex> lock(_package_log_mutex);
+            _package_log = details;
+        });
     });
 }
 
@@ -576,6 +723,9 @@ void BrowserViewModel::tickPackage(uint32_t nowMs)
     try {
         if (_package_read.valid() && _package_read.wait_for(noWait) == std::future_status::ready) {
             auto inspection = _package_read.get();
+            if (!internal::volumePresent(_package_source_mount_id)) {
+                inspection = {nullptr, "Drive disconnected"};
+            }
             _prepared_deb = std::move(inspection.package);
             _package_dialog.set({_prepared_deb ? PackageDialogMode::Review : PackageDialogMode::Result, "Debian package",
                                  std::move(inspection.text), inspection.installable});
@@ -602,7 +752,9 @@ void BrowserViewModel::tickPackage(uint32_t nowMs)
         _package_dialog.set({PackageDialogMode::Result, "Package operation failed", error.what()});
     }
 
-    if (_package_dialog.get().mode == PackageDialogMode::Installing && nowMs - _last_package_update >= 125) {
+    const auto mode = _package_dialog.get().mode;
+    if ((mode == PackageDialogMode::Reading || mode == PackageDialogMode::Installing) &&
+        nowMs - _last_package_update >= 125) {
         _last_package_update = nowMs;
         auto dialog = _package_dialog.get();
         {
@@ -649,11 +801,14 @@ void BrowserViewModel::handlePackageKey(uint32_t key)
     if (key == '\x1b' || (key == files_key::Left && mode != PackageDialogMode::Password)) {
         internal::clearSecret(_package_password);
         _prepared_deb.reset();
+        _eject_mount_id = 0;
         _package_dialog.set({});
         return;
     }
     if (key == '\r' || key == '\n') {
-        if ((mode == PackageDialogMode::Review && _package_dialog.get().allowInstall) ||
+        if (mode == PackageDialogMode::ConfirmEject) {
+            startEject();
+        } else if ((mode == PackageDialogMode::Review && _package_dialog.get().allowInstall) ||
             (mode == PackageDialogMode::Password && !_package_password.empty())) {
             startPackageInstall();
         }

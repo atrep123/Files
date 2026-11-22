@@ -55,6 +55,7 @@ private:
     PreviewView _preview_view;
     std::unique_ptr<PreviewPage> _help_page;
     lv_obj_t* _exit_hint      = nullptr;
+    lv_obj_t* _volume_notice  = nullptr;
     ViewModel* _current_vm    = nullptr;
     View* _current_view       = nullptr;
     lv_group_t* _input_group  = nullptr;
@@ -90,6 +91,9 @@ private:
     void showHelpPage();
     void closeHelpPage();
     void createExitHint();
+    void createVolumeNotice();
+    void updateVolumeNoticeVisibility();
+    static void onVolumeNoticeChanged(void* context, const VolumeNotice& notice);
     void showExitHint();
     void hideExitHint();
     void releaseEscPress();

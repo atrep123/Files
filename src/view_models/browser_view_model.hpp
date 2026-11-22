@@ -4,6 +4,7 @@
 #include "models/debian_package.hpp"
 #include "view_models/view_model.hpp"
 #include <tools/observable/single_observable.hpp>
+#include <deque>
 #include <future>
 #include <mutex>
 
@@ -17,17 +18,22 @@ enum class BrowserAction {
     Rename,
     Info,
     Delete,
-    Locations,
+    Places,
     Eject,
 };
 
-enum class PackageDialogMode { Closed, Reading, Review, Password, Installing, Transferring, Ejecting, Result };
+enum class PackageDialogMode { Closed, Reading, Review, Password, Installing, Transferring, ConfirmEject, Ejecting, Result };
 
 struct PackageDialog {
     PackageDialogMode mode = PackageDialogMode::Closed;
     std::string title;
     std::string text;
     bool allowInstall = false;
+};
+
+struct VolumeNotice {
+    std::string text;
+    uint64_t openMountId = 0;
 };
 
 class BrowserViewModel : public ViewModel {
@@ -44,6 +50,15 @@ public:
     void onKey(uint32_t key) override;
     void onKeyState(uint32_t key, bool pressed) override;
     void tick(uint32_t nowMs) override;
+    void pollVolumes(uint32_t nowMs, bool helpActive = false);
+    bool handleVolumeNotice(uint32_t key);
+    auto& volumeNotice() { return _volume_notice; }
+    bool modalInputActive() const
+    {
+        return _action_menu_open.get() || _pending_delete.get().active ||
+               _pending_rename.get().active || packageDialogOpen();
+    }
+    bool canEjectFromPlaces() const;
 
     smooth_ui_toolkit::SingleObservable<std::string>& currentDirectory()
     {
@@ -143,6 +158,7 @@ private:
     std::unique_ptr<internal::PreparedDeb> _prepared_deb;
     std::string _package_password;
     int _password_attempts = 0;
+    uint64_t _package_source_mount_id = 0;
     std::mutex _package_log_mutex;
     std::string _package_log;
     // The workers finish before the state they use is destroyed.
@@ -152,7 +168,13 @@ private:
     std::mutex _eject_mutex;
     std::string _eject_progress;
     std::future<FileOperationResult> _storage_operation;
-    uint32_t _last_locations_check = 0;
+    uint64_t _eject_mount_id = 0;
+    std::string _eject_name;
+    smooth_ui_toolkit::SingleObservable<VolumeNotice> _volume_notice{VolumeNotice{}};
+    std::deque<VolumeNotice> _queued_notices;
+    uint32_t _last_volume_check = 0;
+    uint32_t _last_tick = 0;
+    uint32_t _notice_started_at = 0;
     uint32_t _last_package_update = 0;
     smooth_ui_toolkit::SingleObservable<uint32_t> _magic{0};
     int _held_selection_direction  = 0;
@@ -164,7 +186,10 @@ private:
     void startPackageRead(const FileEntry& entry);
     void startPackageInstall();
     void tickPackage(uint32_t nowMs);
+    void requestEject();
     void startEject();
+    void showVolumeNotice(VolumeNotice notice);
+    void advanceVolumeNotice();
     void tickStorage(uint32_t nowMs);
     void selectPreviousAction();
     void selectNextAction();

@@ -116,6 +116,10 @@ FilesApp::~FilesApp()
         lv_obj_delete(_exit_hint);
     }
     _exit_hint = nullptr;
+    _browser_vm.volumeNotice().removeObserver();
+    if (_volume_notice) {
+        lv_obj_delete(_volume_notice);
+    }
     if (_help_page) {
         _help_page->detach();
         _help_page.reset();
@@ -136,6 +140,7 @@ void FilesApp::start()
     lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, LV_PART_MAIN);
     createExitHint();
+    createVolumeNotice();
     setupInputGroup();
 #if LV_USE_SDL
     if (!_sdl_event_watch_installed) {
@@ -169,6 +174,10 @@ void FilesApp::onKey(uint32_t key)
         } else if (_help_page) {
             _help_page->onKey(key, _router);
         }
+        return;
+    }
+
+    if (!_browser_vm.modalInputActive() && _browser_vm.handleVolumeNotice(key)) {
         return;
     }
 
@@ -420,6 +429,11 @@ bool FilesApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
         return true;
     }
 
+    if (utf8 && _router.page() == PageId::Browser && (utf8[0] == 'e' || utf8[0] == 'E')) {
+        onKey('e');
+        return true;
+    }
+
     if (utf8 && (utf8[0] == ' ' || (utf8[0] >= '0' && utf8[0] <= '9'))) {
         onKey(static_cast<uint32_t>(utf8[0]));
         return true;
@@ -435,6 +449,7 @@ bool FilesApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
 
 void FilesApp::tick(uint32_t nowMs)
 {
+    _browser_vm.pollVolumes(nowMs, _help_active);
     if (_esc_exit_armed && (_router.page() != PageId::Browser || _help_active || _browser_vm.canGoBack() ||
                             browserEscapeHandledByView())) {
         _esc_exit_armed = false;
@@ -460,6 +475,7 @@ void FilesApp::tick(uint32_t nowMs)
     if (_current_view) {
         _current_view->tick(nowMs);
     }
+    updateVolumeNoticeVisibility();
 }
 
 bool FilesApp::hostRenderingSuspended() const
@@ -479,8 +495,8 @@ void FilesApp::showHelpPage()
     _help_page = createTextPreviewPage("Help",
                                        "Browse and edit file directories, and preview supported file formats.\n\n"
                                        "F / X / OK / ESC: navigation\n"
-                                       "TAB: menu. Locations lists connected drives.\n"
-                                       "Select a drive, then TAB / Eject to disconnect.\n"
+                                       "TAB: menu. Places lists connected drives.\n"
+                                       "At Places, select a drive and press E to eject.\n"
                                        "OK on a .deb shows details. OK again installs.\n"
                                        "PgUp / PgDn: page");
     if (!_help_page) {
@@ -504,6 +520,47 @@ void FilesApp::closeHelpPage()
         _help_page.reset();
     }
     _help_active = false;
+}
+
+void FilesApp::createVolumeNotice()
+{
+    _volume_notice = lv_label_create(lv_layer_top());
+    lv_obj_set_width(_volume_notice, 304);
+    lv_obj_set_style_pad_hor(_volume_notice, 8, 0);
+    lv_obj_set_style_pad_ver(_volume_notice, 4, 0);
+    lv_obj_set_style_text_font(_volume_notice, uiFont12(), 0);
+    lv_obj_set_style_text_color(_volume_notice, lv_color_hex(0xF9EAAF), 0);
+    lv_obj_set_style_text_align(_volume_notice, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_bg_color(_volume_notice, lv_color_hex(0x30302B), 0);
+    lv_obj_set_style_bg_opa(_volume_notice, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(_volume_notice, 5, 0);
+    lv_obj_align(_volume_notice, LV_ALIGN_BOTTOM_MID, 0, -21);
+    lv_obj_remove_flag(_volume_notice, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(_volume_notice, LV_OBJ_FLAG_SCROLLABLE);
+    _browser_vm.volumeNotice().observe(this, onVolumeNoticeChanged);
+}
+
+void FilesApp::onVolumeNoticeChanged(void* context, const VolumeNotice& notice)
+{
+    auto* self = static_cast<FilesApp*>(context);
+    lv_label_set_text(self->_volume_notice, notice.text.c_str());
+    self->updateVolumeNoticeVisibility();
+}
+
+void FilesApp::updateVolumeNoticeVisibility()
+{
+    const auto& notice = _browser_vm.volumeNotice().get();
+    const bool visible = !notice.text.empty() &&
+                         (!notice.openMountId || (!_help_active && !_browser_vm.modalInputActive()));
+    if (visible == !lv_obj_has_flag(_volume_notice, LV_OBJ_FLAG_HIDDEN)) {
+        return;
+    }
+    if (visible) {
+        lv_obj_remove_flag(_volume_notice, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(_volume_notice);
+    } else {
+        lv_obj_add_flag(_volume_notice, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void FilesApp::createExitHint()
@@ -570,8 +627,7 @@ void FilesApp::releaseEscPress()
 
 bool FilesApp::browserEscapeHandledByView()
 {
-    return _browser_vm.actionMenuOpen().get() || _browser_vm.pendingDelete().get().active ||
-           _browser_vm.pendingRename().get().active || _browser_vm.packageDialogOpen();
+    return _browser_vm.modalInputActive() || _browser_vm.volumeNotice().get().openMountId;
 }
 
 ViewModel* FilesApp::viewModelFor(PageId page)
