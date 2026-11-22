@@ -92,7 +92,7 @@ std::string keyHints(std::initializer_list<std::string_view> primary,
     const auto add = [&](std::string_view part) {
         if (part.empty()) return;
         auto candidate = text;
-        if (!candidate.empty()) candidate += "  ";
+        if (!candidate.empty()) candidate += keyGap;
         candidate += part;
         if (fits(candidate, width, 44, uiFont12())) text = std::move(candidate);
     };
@@ -117,7 +117,8 @@ std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, boo
         return keyHints({movement, selected ? open : "", actions}, {usbHint});
     }
     if (eject) {
-        return keyHints({movement, selected ? "Enter ↵" : "", ejectHint, back}, {actions, usbHint});
+        const auto* driveMovement = canMove && inCzech() ? "F↑X↓" : movement;
+        return keyHints({driveMovement, selected ? (inCzech() ? "Enter ↵" : open) : "", ejectHint, actions, back}, {});
     }
     auto keys = keyHints({movement, selected ? open : "", actions, back}, {usbHint});
     if (usb && keys.find(usbHint) == std::string::npos) {

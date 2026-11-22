@@ -50,12 +50,13 @@ def wait_for(predicate, timeout=5):
         assert time.monotonic() < deadline
         time.sleep(.02)
 
-def capture(name, delay=.11, expected=None):
+def capture(name, delay=.11, expected=None, *, keep=True):
     time.sleep(delay)
     stem = f"{name}-{language}"
     request = output / "request"
     pending = output / "request.tmp"
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 8
+    expected = (expected,) if isinstance(expected, str) else expected or ()
     while True:
         pending.write_text(stem + "\n")
         pending.replace(request)
@@ -63,7 +64,7 @@ def capture(name, delay=.11, expected=None):
                  and (output / (stem + ".png")).is_file() and (output / (stem + ".pozadi.png")).is_file())
         document = json.loads((output / (stem + ".json")).read_text(encoding="utf-8"))
         texts = [obj["text"] for obj in document["objects"] if not obj["hidden"] and obj["text"]]
-        if not expected or any(expected in text for text in texts):
+        if all(any(pattern in text for text in texts) for pattern in expected):
             break
         assert time.monotonic() < deadline, (name, expected, texts)
         time.sleep(.10)
@@ -75,7 +76,11 @@ def capture(name, delay=.11, expected=None):
     for obj in document["objects"]:
         if obj.get("font"):
             assert obj["font"]["size"] is not None, (name, obj["font"], obj["text"])
-    print(f"captured {stem}", flush=True)
+    if keep:
+        print(f"captured {stem}", flush=True)
+    else:
+        for suffix in (".json", ".png", ".pozadi.png"):
+            (output / (stem + suffix)).unlink()
 
 def disk(name):
     img = base/(name + ".img")
@@ -700,6 +705,9 @@ def exercise_package():
     run("ar", "r", damaged, payload)
     assert subprocess.run(["dpkg-deb", "--info", damaged], capture_output=True).returncode == 0
     assert subprocess.run(["dpkg-deb", "--contents", damaged], capture_output=True).returncode != 0
+    def wait_for_install_review():
+        capture("wait-package-review", delay=.02, expected=say("Enter Install", "Enter Instalovat"), keep=False)
+
     app = launch("package", sample)
     try:
         key("Return")
@@ -721,7 +729,8 @@ def exercise_package():
         clear_fixture("reject-password")
         key("Escape")
         clear_fixture("require-password")
-        key("Return", delay=1.5)
+        key("Return")
+        wait_for_install_review()
         (Path(os.environ["UX2_ROOT"])/"install-fails").touch()
         key("Return")
         capture("install-progress", expected=say("Installing package", "Instaluji balíček"))
@@ -732,7 +741,8 @@ def exercise_package():
         capture("install-failure-details-end", expected=say("Installation failed", "Instalace selhala"))
         clear_fixture("install-fails")
         key("Escape")
-        key("Return", delay=1.5)
+        key("Return")
+        wait_for_install_review()
         key("Return")
         time.sleep(2.5)
         capture("install-success-no-store", expected=say("Installation complete", "Instalace dokončena"))
@@ -872,7 +882,7 @@ def exercise_previews():
         capture("video-paused", expected=say("Space Play", "Mezera Hrát"))
         key("space")
         time.sleep(9)
-        capture("video-ended", expected="05-video")
+        capture("video-ended", expected=("05-video", say("Files", "Soubory")))
         key("x")
         key("Return", delay=1.0)
         capture("video-error", expected=say("Cannot play video", "Video nelze přehrát"))
@@ -891,8 +901,8 @@ def exercise_filesystem_errors():
     (source/"protected").mkdir(mode=0o700)
     unreadable = base/"unreadable"
     unreadable.mkdir()
-    (unreadable/"protected.txt").write_text("Read error fixture")
-    (unreadable/"protected.txt").chmod(0o600)
+    unreadable_text = unreadable/"protected.txt"
+    unreadable_text.write_text("Read error fixture")
     (source/"source.bin").write_bytes(bytes(8 * 1024 * 1024))
     target = source/"target"
     target.mkdir()
@@ -903,7 +913,8 @@ def exercise_filesystem_errors():
         capture("permission-denied", expected=say("Permission denied", "Přístup odepřen"))
     finally:
         stop(permission)
-    permission = launch("text-permission", unreadable, user="nobody")
+    permission = launch("text-permission", unreadable, LD_PRELOAD=str(base/"read-fault.so"),
+                        FILES_AUDIT_READ_FAULT=str(unreadable_text))
     try:
         key("Return")
         capture("text-read-error", expected=say("Read failed", "Čtení se nezdařilo"))
@@ -942,6 +953,7 @@ for language in os.environ.get("FILES_AUDIT_LANGUAGES", "cs,en").split(","):
     base_original, base = base, language_base
     # Namespace helpers resolve their control flags from the outer sandbox path.
     (base/"slow-copy.so").symlink_to(base_original/"slow-copy.so")
+    (base/"read-fault.so").symlink_to(base_original/"read-fault.so")
     (base/"loop-devices").symlink_to(base_original/"loop-devices")
     marker = base/"copy-started"
     eject, other, copy = [disk(name) for name in ("UX EJECT", "UX OTHER", "UX COPY")]

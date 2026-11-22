@@ -155,8 +155,10 @@ std::optional<std::string> readTextContent(const FileEntry& file)
         if (bytes_read < 0 && errno == EINTR) {
             continue;
         }
-        // Regular files should not return EAGAIN, but treating it as a short
-        // read keeps the preview bounded if a nonstandard filesystem does.
+        if (bytes_read < 0) {
+            ::close(fd);
+            return std::nullopt;
+        }
         break;
     }
     ::close(fd);

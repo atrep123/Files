@@ -34,7 +34,7 @@ void BottomKeyBar::setItems(std::initializer_list<Item> items)
 {
     std::string text;
     for (const auto& item : items) {
-        if (!text.empty()) text += "  ";
+        if (!text.empty()) text += keyGap;
         text += static_cast<char>(item.key);
         text += ' ';
         text += keyLabel(item.image);

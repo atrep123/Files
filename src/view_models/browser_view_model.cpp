@@ -791,6 +791,7 @@ void BrowserViewModel::tickStorage(uint32_t nowMs)
         }
         const auto& result = outcome.operation;
         const bool cancelled = transfer && _transfer_control->cancelled();
+        const auto ejectMountId = _eject_mount_id;
         _transfer_control.reset();
         if (transfer && (outcome.disconnectedSource || outcome.disconnectedDestination)) {
             // Reconcile while the transfer still owns the removal message.
@@ -872,7 +873,10 @@ void BrowserViewModel::tickStorage(uint32_t nowMs)
                                 "Zavřete soubory na disku.\nStiskněte Esc a potom E.");
             } else if (!transfer) {
                 identity = _eject_name;
-                message = local("Check the drive and try again.\nDetails\n", "Zkontrolujte disk a zkuste to znovu.\nPodrobnosti\n") + message;
+                const bool lost = result.message == "Drive disconnected" ||
+                    (result.message.rfind("Could not unmount ", 0) == 0 && !_model.browser().volume(ejectMountId));
+                message = lost ? local("The drive was disconnected.", "Disk byl odpojen.") :
+                    local("Check the drive and try again.\nDetails\n", "Zkontrolujte disk a zkuste to znovu.\nPodrobnosti\n") + message;
             } else if (conflict) {
                 message = _pending_copy.file.name + local(" already exists here.\nChoose another folder.",
                                                            " už v cíli existuje.\nVyberte jinou složku.");

@@ -576,7 +576,11 @@ void FilesApp::updateVolumeNoticeVisibility()
     const bool showUsb = _browser_vm.hasRemovableVolumes() &&
                          (_help_active || _router.page() == PageId::Preview) && !hostRenderingSuspended();
     if (showUsb) {
-        ui::keyLegend(_preview_usb_hint, local("U Open USB", "U Otevřít USB"));
+        const auto* hint = local("U Open USB", "U Otevřít USB");
+        const int width = textWidth(hint, uiFont12());
+        lv_obj_set_x(_preview_usb_hint, 312 - width);
+        lv_obj_set_width(_preview_usb_hint, width);
+        ui::keyLegend(_preview_usb_hint, hint);
         lv_obj_remove_flag(_preview_usb_hint, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(_preview_usb_hint, LV_OBJ_FLAG_HIDDEN);

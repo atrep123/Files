@@ -56,10 +56,10 @@ inline void keyLegend(lv_obj_t* label, std::string_view keys)
 {
     std::string formatted;
     while (!keys.empty()) {
-        const auto end = keys.find("  ");
+        const auto end = keys.find(keyGap);
         const auto item = keys.substr(0, end);
         const auto space = item.find(' ');
-        if (!formatted.empty()) formatted += "  ";
+        if (!formatted.empty()) formatted += keyGap;
         if (space == std::string_view::npos || item == "F↑ X↓" || item == "Z← C→") {
             formatted += item;
         } else {
@@ -70,7 +70,7 @@ inline void keyLegend(lv_obj_t* label, std::string_view keys)
             formatted += '#';
         }
         if (end == std::string_view::npos) break;
-        keys.remove_prefix(end + 2);
+        keys.remove_prefix(end + keyGap.size());
     }
     if (formatted == lv_label_get_text(label)) return;
     lv_label_set_recolor(label, true);

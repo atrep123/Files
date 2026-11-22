@@ -57,6 +57,7 @@ exec /usr/bin/umount -- "$4"
 EOF
 chmod 0755 /usr/bin/udisksctl
 gcc -shared -fPIC -o "$base/slow-copy.so" "$repo/tests/slow_copy.c" -ldl
+gcc -shared -fPIC -o "$base/read-fault.so" "$repo/tests/layout_audit/read_fault.c" -ldl
 rm -f /usr/share/APPLaunch/bin/M5CardputerZero-AppStore
 export UX2_ROOT="$base" UX2_OUTPUT="$out" XDG_CACHE_HOME="$base/cache" FILES_AUDIT_BINARY="$binary"
 mv /usr/bin/apt-get /usr/bin/apt-get.ux2-original
