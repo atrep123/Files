@@ -57,8 +57,11 @@ def capture(name, footer="browser", delay=.16, expected=None):
     with Image.open(output / (stem + ".png")) as image:
         snap = image.convert("RGB")
     assert snap.size == (320, 170), snap.size
+    document = json.loads((output / (stem + ".json")).read_text(encoding="utf-8"))
+    for obj in document["objects"]:
+        if obj.get("font"):
+            assert obj["font"]["size"] is not None, (name, obj["font"], obj["text"])
     if expected:
-        document = json.loads((output / (stem + ".json")).read_text(encoding="utf-8"))
         texts = [obj["text"] for obj in document["objects"] if not obj["hidden"] and obj["text"]]
         assert any(expected in text for text in texts), (name, expected, texts)
     if footer:

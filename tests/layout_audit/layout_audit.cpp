@@ -106,10 +106,21 @@ json font_data(const lv_font_t* font)
         {&font_noto_sans_mono_semibold_12, "Noto Sans Mono SemiBold", 12},
         {&font_noto_sans_mono_semibold_14, "Noto Sans Mono SemiBold", 14},
         {&font_montserrat_medium_14, "Montserrat Medium", 14},
+#if LV_FONT_MONTSERRAT_12
+        {&lv_font_montserrat_12, "LVGL Montserrat", 12},
+#endif
+#if LV_FONT_MONTSERRAT_18
+        {&lv_font_montserrat_18, "LVGL Montserrat", 18},
+#endif
+#if LV_FONT_MONTSERRAT_20
+        {&lv_font_montserrat_20, "LVGL Montserrat", 20},
+#endif
     };
     for (const auto& face : faces) {
-        if (font == face.font) {
-            return {{"name", face.name}, {"size", face.size}, {"line_height", font->line_height}};
+        // Files copies the font descriptors to attach fallbacks. The bitmap descriptor is shared.
+        if (font == face.font || (font->dsc && font->dsc == face.font->dsc)) {
+            return {{"name", face.name}, {"size", face.size}, {"line_height", font->line_height},
+                    {"fallback", font->fallback ? font_data(font->fallback) : json(nullptr)}};
         }
     }
     return {{"name", "LVGL font"}, {"size", nullptr}, {"line_height", font->line_height}};
