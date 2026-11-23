@@ -186,9 +186,16 @@ public:
         _error_label->setTextColor(lv_color_hex(ui::error));
         _error_label->setTextAlign(LV_TEXT_ALIGN_CENTER);
         _error_label->setSize(lv_pct(100), LV_SIZE_CONTENT);
-        _error_label->align(LV_ALIGN_CENTER, 0, 0);
         if (_preview_loaded) {
             _error_label->addFlag(LV_OBJ_FLAG_HIDDEN);
+        } else {
+            const auto* message = local("Preview unavailable", "Náhled není dostupný");
+            const int width = textWidth(message, uiFont14());
+            const int start = (kPreviewWidth - width - 14) / 2;
+            ui::errorCross(_viewport->raw_ptr(), start, (kPreviewHeight - 10) / 2);
+            _error_label->setTextAlign(LV_TEXT_ALIGN_LEFT);
+            _error_label->setSize(width + 1, LV_SIZE_CONTENT);
+            _error_label->setPos(start + 14, (kPreviewHeight - lv_font_get_line_height(uiFont14())) / 2);
         }
 
         _key_bar = std::make_unique<BottomKeyBar>(_root->raw_ptr());
@@ -239,8 +246,7 @@ public:
                 move(0, kMoveStep);
                 break;
             case '4':
-                _fullscreen = !_fullscreen;
-                fitForCurrentMode();
+                toggleFullscreen();
                 break;
             case '5':
                 zoom(false);
@@ -283,6 +289,10 @@ private:
     int32_t _view_x        = 0;
     int32_t _view_y        = 0;
     bool _fullscreen       = false;
+    struct ImageTransform { uint32_t scale; int32_t x; int32_t y; };
+    ImageTransform _windowed_transform{};
+    ImageTransform _fullscreen_start{};
+    int32_t _fullscreen_rotation = 0;
     bool _is_gif           = false;
     bool _is_jpeg          = false;
     bool _is_bmp           = false;
@@ -305,6 +315,29 @@ private:
         const uint32_t image_height = swaps_axes ? _image_width : _image_height;
         return fitScale(image_width, image_height, static_cast<uint32_t>(viewportWidth()),
                         static_cast<uint32_t>(viewportHeight()));
+    }
+
+    void toggleFullscreen()
+    {
+        const ImageTransform before{_scale, _view_x, _view_y};
+        const auto previousFit = _fit_scale;
+        _fullscreen = !_fullscreen;
+        _fit_scale = defaultScale();
+        _scale = std::clamp((_scale * _fit_scale + previousFit / 2) / previousFit, kMinScale, kMaxScale);
+        if (_fullscreen) {
+            _windowed_transform = before;
+        } else if (before.scale == _fullscreen_start.scale && before.x == _fullscreen_start.x &&
+                   before.y == _fullscreen_start.y && _rotation == _fullscreen_rotation) {
+            _scale = _windowed_transform.scale;
+            _view_x = _windowed_transform.x;
+            _view_y = _windowed_transform.y;
+        }
+        refreshZoom();
+        applyLayout();
+        if (_fullscreen) {
+            _fullscreen_start = {_scale, _view_x, _view_y};
+            _fullscreen_rotation = _rotation;
+        }
     }
 
     void fitForCurrentMode()
@@ -384,10 +417,6 @@ private:
                 });
             }
         }
-        if (_error_label) {
-            _error_label->setSize(viewportWidth(), LV_SIZE_CONTENT);
-            _error_label->align(LV_ALIGN_CENTER, 0, 0);
-        }
         applyImageTransform();
     }
 
@@ -418,6 +447,9 @@ private:
         const int32_t image_x = viewportWidth() / 2 - static_cast<int32_t>(_image_width) / 2 - _view_x;
         const int32_t image_y = viewportHeight() / 2 - static_cast<int32_t>(_image_height) / 2 - _view_y;
         lv_obj_align(image_obj, LV_ALIGN_TOP_LEFT, image_x, image_y);
+#ifdef FILES_LAYOUT_AUDIT
+        lv_obj_set_user_data(image_obj, &layout_audit::mono_image);
+#endif
     }
 };
 

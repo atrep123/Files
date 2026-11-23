@@ -3,6 +3,9 @@
 #include "assets/font_assets.hpp"
 #include "views/browser_text.hpp"
 #include <algorithm>
+#ifdef FILES_LAYOUT_AUDIT
+#include "layout_audit/layout_audit.hpp"
+#endif
 
 namespace files::ui {
 
@@ -15,6 +18,8 @@ constexpr uint32_t error = 0xFF8284;
 constexpr uint32_t success = 0x8CE38C;
 constexpr uint32_t bar = 0x212421;
 constexpr uint32_t dialog = 0x102029;
+constexpr uint32_t track = 0x636563;
+constexpr uint32_t dialogTrack = 0x737573;
 
 inline lv_obj_t* box(lv_obj_t* parent, int x, int y, int w, int h, uint32_t color)
 {
@@ -46,9 +51,13 @@ inline void hidden(lv_obj_t* obj, bool hide)
     else lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
 }
 
-inline void errorCross(lv_obj_t* parent, int x, int y)
+inline lv_obj_t* errorCross(lv_obj_t* parent, int x, int y)
 {
     auto* icon = box(parent, x, y, 10, 10, black);
+    lv_obj_set_style_bg_opa(icon, LV_OPA_TRANSP, 0);
+#ifdef FILES_LAYOUT_AUDIT
+    lv_obj_set_user_data(icon, &layout_audit::mono_cross);
+#endif
     static constexpr lv_point_precise_t forward[] = {{1, 1}, {8, 8}};
     static constexpr lv_point_precise_t reverse[] = {{1, 8}, {8, 1}};
     for (const auto* points : {forward, reverse}) {
@@ -58,6 +67,7 @@ inline void errorCross(lv_obj_t* parent, int x, int y)
         lv_obj_set_style_line_width(stroke, 2, 0);
         lv_obj_set_style_line_color(stroke, lv_color_hex(error), 0);
     }
+    return icon;
 }
 
 inline void line(lv_obj_t* label, const std::string& text, int width, const lv_font_t* font,

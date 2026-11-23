@@ -42,6 +42,8 @@ struct PackageDialog {
     bool rootScripts = false;
     bool move = false;
     std::string fixedStatus;
+    std::string fixedInstruction;
+    std::string diagnosticLabel;
     std::string maskedPassword;
     std::optional<unsigned> progress;
     bool cancelling = false;
@@ -85,6 +87,7 @@ public:
     std::string directoryTitle();
     std::string directoryCaption();
     std::string menuContext() const;
+    bool clipboardMoves() const { return hasClipboard() && _pending_copy.cut; }
     bool hasClipboard() const { return _pending_copy.active; }
     bool hasMultipleRemovableVolumes() const { return _model.browser().hasMultipleRemovableVolumes(); }
     bool volumeActionShown() const { return _volume_notice.get().connectedMountId != 0; }

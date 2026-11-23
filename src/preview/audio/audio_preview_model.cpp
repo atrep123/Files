@@ -415,7 +415,7 @@ bool AudioPreviewModel::load(const FileEntry& file)
         return false;
     }
 
-    const auto duration = static_cast<uint32_t>(std::ceil(std::max(0.0f, _impl->durationSec())));
+    const auto duration = std::max(0.0f, _impl->durationSec());
     _file.set(AudioPreviewFile{file, duration});
     _state.set(AudioPlaybackState::Ready);
     _progress_sec.set(_impl->progressSec());
@@ -489,7 +489,7 @@ void AudioPreviewModel::tick(uint32_t nowMs)
 
     if (_impl->consumeFinished()) {
         _state.set(AudioPlaybackState::Stopped);
-        _progress_sec.set(static_cast<float>(_file.get().durationSec));
+        _progress_sec.set(_file.get().durationSec);
         spdlog::info("AudioPreviewModel: finished");
     }
 }

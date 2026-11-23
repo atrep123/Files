@@ -77,6 +77,7 @@ struct FileOperationResult {
 struct PendingDeleteFile {
     bool active = false;
     FileEntry file;
+    bool emptyFolder = false;
 };
 
 struct PendingCopyFile {

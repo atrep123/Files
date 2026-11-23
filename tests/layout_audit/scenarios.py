@@ -120,14 +120,14 @@ def attach(d):
 def detach(path, lazy=False):
     run("umount", *(["--lazy"] if lazy else []), path)
 
-def deb(target, scripts, architecture="all", depends=""):
+def deb(target, scripts, architecture="all", depends="", version="1.0.0", package="ux2-files-test"):
     tree = base/("pkg-" + target.stem)
     (tree/"DEBIAN").mkdir(parents=True)
     docs = tree/"usr/share/doc/ux2-files-test"
     docs.mkdir(parents=True)
     (docs/"probe.txt").write_text("SDL UI fixture\n")
     (tree/"DEBIAN/control").write_text(
-        f"Package: ux2-files-test\nVersion: 1.0.0\nArchitecture: {architecture}\n"
+        f"Package: {package}\nVersion: {version}\nArchitecture: {architecture}\n"
         "Maintainer: Files Test <files-test@example.invalid>\n" +
         (f"Depends: {depends}\n" if depends else "") +
         "Description: Příručka pro Files / Files manual\n" +
@@ -345,6 +345,10 @@ def exercise_browser():
         attach(other)
         time.sleep(.9)
         capture("usb-connected-fifth-row", expected="UX OTHER")
+        key("u")
+        capture("usb-connected-fifth-row-open", expected="UX OTHER")
+        key("Escape")
+        assert_selected(capture("usb-connected-fifth-row-return", expected="04.txt"), "04.txt")
     finally:
         stop(app)
         if os.path.ismount(other[0]):
@@ -459,7 +463,7 @@ def exercise_usb():
         time.sleep(.85)
         capture("usb-connected", expected="UX EJECT")
         key("Return")
-        capture("preview-usb", expected=say("U Open USB", "U Otevřít USB"))
+        capture("preview-usb", expected=say("U Open drive", "U Otevřít disk"))
         key("u")
         capture("drive-root", expected="Příručky")
         key("x")
@@ -591,10 +595,15 @@ def exercise_usb_interruptions():
         key("u")
         key("x")
         key("Return", delay=1.55)
+        capture("wait-deb-source-review", expected=say("Enter Install", "Enter Instalovat"), keep=False)
+        attach(other)
+        time.sleep(.90)
         detach(mount, lazy=True)
-        time.sleep(.88)
-        capture("deb-source-disconnected", expected=say("Source drive disconnected", "Zdrojový disk odpojen"))
+        capture("deb-source-disconnected", delay=.88,
+                expected=say("Source drive disconnected", "Zdrojový disk odpojen"))
         key("Escape")
+        assert_selected(capture("deb-source-disconnected-return", expected="UX OTHER"), "UX OTHER")
+        detach(other[0], lazy=True)
         attach(copy)
         time.sleep(.85)
         key("u")
@@ -620,13 +629,15 @@ def exercise_usb_interruptions():
         time.sleep(.9)
         capture("preview-drive-disconnected", expected=say("Places", "Umístění"))
         attach(copy)
-        time.sleep(.85)
+        time.sleep(.95)
         key("u")
+        capture("wait-neighbor-drive-root", expected=("UX COPY", "01-readme.txt"), keep=False)
         key("Return")
+        capture("wait-neighbor-drive-preview", expected="USB text opened before disconnection", keep=False)
         attach(other)
-        time.sleep(.85)
+        time.sleep(.95)
         detach(mount, lazy=True)
-        time.sleep(.85)
+        time.sleep(.95)
         capture("preview-drive-disconnected-neighbor", expected=("UX OTHER", say("Preview closed", "Náhled zavřen")))
         attach(copy)
         time.sleep(.9)
@@ -677,7 +688,7 @@ def exercise_copy():
     try:
         key("x")
         action(2)
-        capture("copy-clipboard", expected=say("Clipboard", "Ve schránce"))
+        capture("copy-clipboard", expected=say("In clipboard", "Ve schránce"))
         key("f")
         key("Return")
         key("Tab")
@@ -740,10 +751,10 @@ def exercise_copy():
         capture("copy-progress-bytes", delay=.20, expected=say("3 MiB of 8 MiB", "3 MiB z 8 MiB"))
         key("Escape")
         time.sleep(3.05)
-        capture("copy-cancelled-after-bytes", expected=say("Copy cancelled", "Kopírování zrušeno"))
+        capture("copy-cancelled-after-bytes", expected=(say("Copy cancelled", "Kopírování zrušeno"), "02-source copy 2.bin"))
         assert (dest/orig.name).stat().st_size == 8 * 1024 * 1024
         assert not list(dest.glob(".files-transfer-*"))
-        assert not (dest/"02-source copy copy.bin").exists()
+        assert not (dest/"02-source copy 2.bin").exists()
     finally:
         stop(app)
         marker.unlink(missing_ok=True)
@@ -767,8 +778,15 @@ def exercise_copy_folder():
         wait_for(marker.exists)
         capture("copy-folder-progress", expected=("02-source-folder", say("Preparing folder", "Připravuji složku")))
         key("Escape")
+        capture("copy-folder-cancelling", expected=say("Cancelling copy", "Ruším kopírování"))
         time.sleep(3.05)
-        assert not (sample/"01-target"/source.name).exists()
+        capture("copy-folder-cancelled", expected=say("Copy cancelled", "Kopírování zrušeno"))
+        target = sample/"01-target"/source.name
+        assert not target.exists()
+        action(0)
+        key("Return", delay=.55)
+        assert_selected(capture("copy-folder-success", expected=say("Copied", "Zkopírováno")), source.name)
+        assert (target/"data.bin").stat().st_size == (source/"data.bin").stat().st_size
     finally:
         stop(app)
         marker.unlink(missing_ok=True)
@@ -802,7 +820,7 @@ def exercise_copy_disconnect(from_usb, move=False):
             app = launch("copy-disconnect", sample, LD_PRELOAD=str(base/"slow-copy.so"), FILES_COPY_MARKER=str(marker))
             action(3 if move else 2)
             if move:
-                capture("move-clipboard", expected=say("Tab › Paste", "Tab › Vložit"))
+                capture("move-clipboard", expected=say("Tab → Paste and move", "Tab → Vložit přesunem"))
             attach(copy)
             time.sleep(.85)
             key("u")
@@ -824,6 +842,9 @@ def exercise_copy_disconnect(from_usb, move=False):
             time.sleep(2.75)
             capture("move-cancelled", expected=say("Move cancelled", "Přesun zrušen"))
             assert orig.exists() and not (mount/orig.name).exists()
+            key("Escape")
+            assert_selected(capture("move-cancelled-source", expected=orig.name), orig.name)
+            key("u")
             action(0)
             key("Return")
             capture("move-success", expected=say("Moved 02-source.bin", "Přesunuto 02-source.bin"))
@@ -965,6 +986,9 @@ def exercise_additional_storage_states():
         gone.write_text("A file replaced the folder after the list was read.")
         key("Return")
         capture("folder-disappeared", expected=say("Item is no longer a folder", "Položka už není složka"))
+        key("Return")
+        capture("folder-replaced-file-opened", expected="A file replaced the folder")
+        key("Escape")
         attach(copy)
         time.sleep(.9)
         key("u")
@@ -972,7 +996,9 @@ def exercise_additional_storage_states():
         type_ascii("draft")
         detach(copy[0], lazy=True)
         time.sleep(.9)
-        capture("new-folder-drive-disconnected", expected=say("Folder creation cancelled", "Vytvoření složky zrušeno"))
+        capture("new-folder-drive-disconnected", expected=say("No folder was created", "Složka nebyla vytvořena"))
+        key("Escape")
+        assert_selected(capture("new-folder-drive-disconnected-return"), say("Home", "Domů"))
     finally:
         stop(app)
         if os.path.ismount(copy[0]):
@@ -1015,7 +1041,7 @@ def exercise_transfer_unplug_variants():
                 if active:
                     detach(path, lazy=True)
             expected = say("Move interrupted", "Přesun přerušen") if move else say(
-                "Source and target drives disconnected", "Zdrojový i cílový disk odpojen")
+                "Source and target drives disconnected", "Oba disky byly odpojeny")
             capture(name, delay=3.1, expected=expected)
             if name == "copy-both-disconnected":
                 key("Escape")
@@ -1079,8 +1105,10 @@ def exercise_package():
         key("Return")
         capture("install-password", expected=say("Password to install", "Heslo pro instalaci"))
         key("Return")
-        capture("install-password-empty-submit", expected=say("Enter your account password", "Zadejte heslo svého účtu"))
-        type_ascii("fixture")
+        capture("install-password-empty-submit", expected=say("Enter a password", "Zadejte heslo."))
+        key("f")
+        capture("install-password-first-character", expected="*")
+        type_ascii("ixture")
         capture("install-password-masked", expected="*******")
         key("Escape")
         capture("install-password-cancelled", expected="01-balíček.deb")
@@ -1096,7 +1124,7 @@ def exercise_package():
         capture("install-password-retry-one", expected="*")
         key("Return", delay=.5)
         capture("install-password-last-empty",
-                expected=(say("Incorrect password", "Nesprávné heslo"), say("Attempt 3 of 3", "Pokus 3 ze 3")))
+                expected=(say("Incorrect password", "Nesprávné heslo"), say("1 attempt left", "Zbývá 1 pokus")))
         type_ascii("fixture")
         capture("install-password-last-attempt", expected=say("Attempt 3 of 3", "Pokus 3 ze 3"))
         key("Return")
@@ -1114,7 +1142,7 @@ def exercise_package():
                                              say("Not enough disk space", "Na disku není dost místa")))
         key("Page_Down")
         key("Page_Down")
-        capture("install-failure-details-end", expected=say("Press F to return", "Klávesou F se vraťte"))
+        capture("install-failure-details-end", expected="dpkg --audit: no unfinished packages.")
         clear_fixture("install-fails")
         key("Escape")
         key("Return")
@@ -1169,6 +1197,10 @@ def exercise_package():
         capture("deb-wrong-architecture", expected=say("Unsupported architecture", "Nepodporovaná architektura"))
         key("Page_Down")
         capture("deb-wrong-architecture-scrolled", expected=say("Unsupported architecture", "Nepodporovaná architektura"))
+        for _ in range(14):
+            key("Page_Down", delay=.02, held=.04)
+        ending = capture("deb-wrong-architecture-end", expected=(say("Unsupported architecture", "Nepodporovaná architektura"), "F↑"))
+        assert not any(obj["text"] == "X↓" for obj in ending["objects"] if not obj["hidden"])
         key("Escape")
         key("x")
         key("Return", delay=.45)
@@ -1185,7 +1217,9 @@ def exercise_package():
         key("x")
         key("Return")
         wait_for_install_review()
-        capture("deb-with-dependencies", expected="debian-archive-")
+        capture("deb-with-dependencies", expected="debian-archive-keyring")
+        key("x")
+        capture("deb-dependencies-scrolled", expected=("debian-archive-keyring", say("Enter Install", "Enter Instalovat")))
         key("Escape")
         for _ in range(4):
             key("f")
@@ -1231,6 +1265,7 @@ def exercise_previews():
     (sample/"11-literal.txt").write_text(say("Empty file", "Prázdný soubor"))
     (sample/"12-seven.txt").write_text("\n".join(f"Row {i}" for i in range(1, 8)))
     (sample/"13-eight.txt").write_text("\n".join(f"Row {i}" for i in range(1, 9)))
+    (sample/"14-newline.txt").write_text("\n")
     media_tools = base/"media-tools"
     media_tools.mkdir()
     slow_video = media_tools/"ffmpeg"
@@ -1253,10 +1288,12 @@ def exercise_previews():
         capture("image-zoom", expected="02-image")
         key("8")
         capture("image-rotated", expected=say("Rotate", "Otočit"))
+        key("7")
+        capture("image-rotated-zoom", expected=("125", "02-image"))
         key("4")
         capture("image-fullscreen")
         key("4")
-        capture("image-fullscreen-return", expected=("02-image", say("Rotate", "Otočit")))
+        capture("image-fullscreen-return", expected=("125", "02-image", say("Rotate", "Otočit")))
         key("Escape")
         key("x")
         key("Return")
@@ -1272,12 +1309,14 @@ def exercise_previews():
         key("8")
         capture("audio-speed-5", expected="5×")
         key("6")
-        capture("audio-paused", expected=say("Play", "Hrát"))
+        capture("audio-paused", expected=say("Resume", "Pokračovat"))
         key("6")
         time.sleep(2.0)
         capture("audio-ended", expected="0:08")
+        key("8")
         key("6", delay=.12)
-        capture("audio-replay", delay=.06, expected=("0:00", say("Pause", "Pauza")))
+        capture("audio-replay-start", delay=.06, expected=("0:00", say("Pause", "Pauza")))
+        capture("audio-replay", delay=.10, expected=("0:07", "-0:01", say("Pause", "Pauza")))
         key("Escape")
         for _ in range(3):
             key("space", delay=.07)
@@ -1290,7 +1329,7 @@ def exercise_previews():
         time.sleep(.86)
         capture("video-playing", expected=say("Space Pause", "Mezera Pauza"))
         key("space")
-        capture("video-paused", expected=say("Space Play", "Mezera Hrát"))
+        capture("video-paused", expected=say("Space Play", "Mezera Pokračovat"))
         key("space")
         time.sleep(9)
         capture("video-ended", expected=("05-video", say("Files", "Soubory")))
@@ -1321,7 +1360,7 @@ def exercise_previews():
         pause = say("Ⅱ Paused", "Ⅱ Pauza")
         before = capture("video-paused-long-name", expected=("v03.mp4", pause))
         key("c", delay=1.05)
-        after = capture("video-paused-after-seek", expected=(pause, say("Space Play", "Mezera Hrát")))
+        after = capture("video-paused-after-seek", expected=(pause, say("Space Play", "Mezera Pokračovat")))
 
         def pause_seconds(frame):
             title = next(obj["text"] for obj in frame["objects"] if not obj["hidden"] and pause in (obj["text"] or ""))
@@ -1347,6 +1386,11 @@ def exercise_previews():
                 key("x")
                 capture("text-eight-lines-end", expected=("Row 8", "F↑"))
             key("Escape")
+        key("x")
+        key("Return")
+        newline = capture("text-newline-only", expected="14-newline.txt")
+        assert not any(obj["text"] == say("Empty file", "Prázdný soubor") for obj in newline["objects"] if not obj["hidden"])
+        key("Escape")
     finally:
         stop(app)
 
@@ -1402,7 +1446,17 @@ def exercise_editor_boundaries():
         for char in "slozka-pro-overeni-dlouheho-nazvu-se-srozumitelnym-koncem-v03":
             key("minus" if char == "-" else char, delay=.02)
         capture("new-folder-long-name", expected=("v03", say("Enter Create", "Enter Vytvořit")))
+        key("Home")
+        capture("new-folder-long-name-start", expected=("slozka-pro", say("Enter Create", "Enter Vytvořit")))
         key("Escape")
+        action(2, from_end=True)
+        type_ascii("fresh")
+        key("Return")
+        key("minus")
+        key("3")
+        key("Escape")
+        assert_selected(capture("new-folder-conflict-cancelled", expected="fresh"), "fresh-2")
+        assert not (sample/"fresh-3").exists()
     finally:
         stop(app)
 
@@ -1431,6 +1485,10 @@ def exercise_editor_boundaries():
         action(5)
         key("Return")
         assert_selected(capture("delete-fifth-row", expected=say("Deleted", "Smazáno")), "06.txt")
+        key("Page_Down")
+        action(5)
+        key("Return")
+        assert_selected(capture("delete-last-row", expected="08.txt"), "07.txt")
     finally:
         stop(app)
 
@@ -1561,18 +1619,202 @@ def exercise_filesystem_errors():
         action(2, from_end=True)
         type_ascii("new")
         key("Return")
-        capture("new-folder-read-only", expected=(say("New folder", "Nová složka"), say("Disk is read-only", "Disk je jen pro čtení")))
+        capture("new-folder-read-only", expected=(say("Cannot create folder", "Složku nelze vytvořit"), say("Disk is read-only", "Disk je jen pro čtení")))
         key("Escape")
         key("Escape")
         action(6)
         key("Return")
-        capture("delete-mounted-filesystem", expected=say("Folder contains a mounted filesystem", "Složka obsahuje připojený souborový systém"))
+        capture("delete-mounted-filesystem", expected=say("This folder is a mount point", "Tato složka je bodem připojení"))
         key("Escape")
     finally:
         stop(app)
         if os.path.ismount(target):
             detach(target)
 
+
+
+def exercise_round5_volume_identity():
+    first = attach(eject)
+    alternate_parent = Path("/media/root")
+    alternate_parent.mkdir(exist_ok=True)
+    alternate = alternate_parent / first.name
+    alternate.mkdir()
+    attach((alternate, other[1]))
+    app = launch("duplicate-volumes", base)
+    try:
+        key("x")
+        assert_selected(capture("places-duplicate-labels", expected=("UX EJECT #1", "UX EJECT #2")), "UX EJECT #2")
+        key("Tab")
+        capture("places-duplicate-menu", expected=("UX EJECT #2", say("E  Eject", "E  Vysunout")))
+        key("e")
+        capture("places-duplicate-eject", expected=("UX EJECT #2", say("Eject drive?", "Vysunout disk?")))
+    finally:
+        stop(app)
+        detach(alternate)
+        detach(first)
+        alternate.rmdir()
+
+    drive = attach(copy)
+    second = attach(other)
+    data = drive / "source.txt"
+    data.write_text("Original preview remains visible.")
+    app = launch("unrelated-drive", base)
+    try:
+        key("Page_Up")
+        capture("wait-copy-available", expected="UX COPY", keep=False)
+        key("Return")
+        key("Return")
+        detach(second)
+        capture("preview-unrelated-drive-disconnected", expected=("Original preview remains visible.", "UX OTHER"))
+    finally:
+        stop(app)
+        data.unlink()
+        detach(drive)
+        if os.path.ismount(second):
+            detach(second)
+
+
+def exercise_round5_error_boundaries():
+    sample = base / "scrolled-errors"
+    sample.mkdir()
+    for i in range(7):
+        (sample/f"{i:02}.txt").write_text("Text")
+    (sample/"99-broken.png").write_text("Broken")
+    app = launch("scrolled-errors", sample)
+    try:
+        key("Page_Down")
+        key("Page_Down")
+        key("Return")
+        capture("image-error-scrolled", expected=say("Preview unavailable", "Náhled není dostupný"))
+        key("Escape")
+        assert_selected(capture("image-error-scrolled-return", expected="99-broken.png"), "99-broken.png")
+    finally:
+        stop(app)
+
+    root = base / "nested-delete"
+    nested = root / "target/media/usb"
+    nested.mkdir(parents=True)
+    run("mount", "-t", "tmpfs", "tmpfs", nested)
+    app = launch("nested-delete", root)
+    try:
+        action(5)
+        key("Return")
+        capture("delete-nested-mount", expected="media/usb")
+    finally:
+        stop(app)
+        detach(nested)
+
+    archive = Path("/media/ARCHIV")
+    archive.mkdir()
+    attach((archive, copy[1]))
+    archived_file = archive / "archived.txt"
+    archived_file.write_text("Preserved.")
+    run("mount", "-o", "remount,ro", archive)
+    app = launch("archive-read-only", base)
+    try:
+        key("Return")
+        action(6)
+        key("Return")
+        capture("delete-named-drive-read-only", expected=("ARCHIV", say("Disk is read-only", "Disk je jen pro čtení")))
+    finally:
+        stop(app)
+        run("mount", "-o", "remount,rw", archive)
+        archived_file.unlink()
+        detach(archive)
+        archive.rmdir()
+
+
+
+def exercise_round5_package_metadata():
+    folder = base / "long-package"
+    folder.mkdir()
+    deb(folder / "revision.deb", False, architecture="arm64",
+        version="1:42.302.503+cardputerzero20261123-123456", package="ux2-files-arm-revision")
+    run("dpkg", "--add-architecture", "arm64")
+    app = launch("long-package", folder)
+    try:
+        key("Return")
+        capture("deb-long-version", expected=("· arm64", say("APT plan verified", "Plán APT ověřen")))
+        key("Page_Down")
+        capture("deb-long-version-scrolled", expected=("· arm64", say("APT plan verified", "Plán APT ověřen")))
+    finally:
+        stop(app)
+
+
+def exercise_round5_video_clock():
+    folder = base / "long-video-clock"
+    folder.mkdir()
+    movie = folder / "Dlouhý název videa s odlišitelným zakončením v03.mp4"
+    run("ffmpeg", "-hide_banner", "-loglevel", "error", "-threads", "1",
+        "-f", "lavfi", "-i", "color=c=0x182C5A:size=144x90:rate=15", "-t", "603",
+        "-vf", r"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:text='%{pts\:hms}':"
+               "x=4:y=4:fontsize=16:fontcolor=white:box=1:boxcolor=black",
+        "-c:v", "mpeg4", "-threads", "1", movie)
+    app = launch("long-video-clock", folder)
+    try:
+        key("Return")
+        capture("wait-long-clock-playing", expected=say("Space Pause", "Mezera Pauza"), keep=False)
+        key("space")
+        for step in range(1, 60):
+            key("c", delay=.045, held=.04)
+            elapsed = step * 10
+            if step == 59:
+                break
+            capture("wait-long-clock-seek", delay=0,
+                    expected=f"{elapsed // 60}:{elapsed % 60:02}", keep=False)
+        capture("wait-long-clock-final-seek", expected="9:50", keep=False)
+        # Advance in short playback segments, checking the displayed clock at each pause.
+        def pause_at(target, state):
+            for _ in range(8):
+                view = capture("wait-long-clock-time", delay=0,
+                               expected=say("Ⅱ Paused", "Ⅱ Pauza"), keep=False)
+                status = next(obj["text"] for obj in view["objects"]
+                              if not obj["hidden"] and (obj["text"] or "").startswith("Ⅱ "))
+                minute, second = map(int, status.split()[-1].split(":"))
+                current = minute * 60 + second
+                if current == target:
+                    capture(state, expected=(f"{minute}:{second:02}", "v03.mp4"))
+                    return
+                assert current < target, (current, target)
+                key("space", delay=max(1.0, target - current + .25))
+                key("space")
+            raise AssertionError(f"Clock did not reach {target} seconds")
+
+        pause_at(599, "video-paused-9m59")
+        pause_at(600, "video-paused-10m00")
+        before = Image.open(output / f"video-paused-9m59-{language}.png").crop((56, 20, 264, 150))
+        after = Image.open(output / f"video-paused-10m00-{language}.png").crop((56, 20, 264, 150))
+        assert before.tobytes() != after.tobytes()
+    finally:
+        stop(app)
+
+
+def exercise_round5_text_limits():
+    folder = base / "text-limits"
+    folder.mkdir()
+    document = folder / "01-truncated.txt"
+    document.write_text("The preview shows the first 64 KiB.\n" * 1900)
+    other_file = folder / "02-file.txt"
+    other_file.write_text("Read fixtures")
+    app = launch("text-limited", folder)
+    try:
+        key("Return")
+        capture("text-limited", expected=(document.name, say("First 64 KiB", "Prvních 64 KiB")))
+    finally:
+        stop(app)
+
+    for error, message in (
+        ("missing", say("The file is no longer available", "Soubor už není dostupný")),
+        ("other", say("The file could not be read", "Soubor se nepodařilo přečíst")),
+    ):
+        app = launch(f"text-read-{error}", folder, LD_PRELOAD=str(base/"read-fault.so"),
+                     FILES_AUDIT_READ_FAULT=str(other_file), FILES_AUDIT_READ_ERROR=error)
+        try:
+            key("x")
+            key("Return")
+            capture(f"text-read-{error}", expected=(other_file.name, message))
+        finally:
+            stop(app)
 
 failures = []
 for language in os.environ.get("FILES_AUDIT_LANGUAGES", "cs,en").split(","):
@@ -1602,6 +1844,11 @@ for language in os.environ.get("FILES_AUDIT_LANGUAGES", "cs,en").split(","):
         "eject-long": exercise_eject_long, "retained-copy": exercise_retained_copy,
         "additional-storage": exercise_additional_storage_states,
         "transfer-unplug-variants": exercise_transfer_unplug_variants,
+        "round5-volume-identity": exercise_round5_volume_identity,
+        "round5-errors": exercise_round5_error_boundaries,
+        "round5-package-metadata": exercise_round5_package_metadata,
+        "round5-video-clock": exercise_round5_video_clock,
+        "round5-text-limits": exercise_round5_text_limits,
     }
     selected = os.environ.get("FILES_AUDIT_SCENARIOS", ",".join(scenarios)).split(",")
     for scenario in selected:

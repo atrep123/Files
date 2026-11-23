@@ -15,7 +15,7 @@ enum class AudioPlaybackState {
 
 struct AudioPreviewFile {
     FileEntry entry;
-    uint32_t durationSec = 0;
+    float durationSec = 0;
 };
 
 inline const char* audioPlaybackStateName(AudioPlaybackState state)

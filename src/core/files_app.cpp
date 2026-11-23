@@ -517,7 +517,7 @@ void FilesApp::showHelpPage()
         "Tab Menu · E Eject\n"
         "U Open USB / choose drive\n"
         "Esc Back · Hold Esc · Exit\n"
-        "PgUp/PgDn Page\n"
+        "PgUp/PgDn  Move by page\n"
         "Enter on .deb · Review package",
         "F↑ X↓ Pohyb · Enter Otevřít\n"
         "Tab Nabídka · E Vysunout\n"
@@ -575,15 +575,14 @@ void FilesApp::onVolumeNoticeChanged(void* context, const VolumeNotice& notice)
 
 void FilesApp::updateVolumeNoticeVisibility()
 {
-    const bool showUsb = _browser_vm.hasRemovableVolumes() &&
+    const auto& notice = _browser_vm.volumeNotice().get();
+    const bool showUsb = _browser_vm.hasRemovableVolumes() && !notice.connectedMountId &&
                          (_help_active || _router.page() == PageId::Preview) && !hostRenderingSuspended();
     if (showUsb) {
         const auto* preview = _model.preview().page().get();
-        const auto* hint = !_help_active && preview && preview->usesWideFooter()
-            ? (_browser_vm.hasMultipleRemovableVolumes() ? local("U Drives", "U Disky") :
-                                                           local("U Open", "U Otevřít")) :
-            _browser_vm.hasMultipleRemovableVolumes() ? local("U Choose USB", "U Vybrat USB") :
-                                                        local("U Open USB", "U Otevřít USB");
+        const bool wide = !_help_active && preview && preview->usesWideFooter();
+        const auto* hint = wide ? "U" : _browser_vm.hasMultipleRemovableVolumes() ?
+            local("U Drives", "U Disky") : local("U USB", "U USB");
         const int width = textWidth(hint, uiFont12());
         lv_obj_set_x(_preview_usb_hint, 312 - width);
         lv_obj_set_width(_preview_usb_hint, width);
@@ -592,7 +591,6 @@ void FilesApp::updateVolumeNoticeVisibility()
     } else {
         lv_obj_add_flag(_preview_usb_hint, LV_OBJ_FLAG_HIDDEN);
     }
-    const auto& notice = _browser_vm.volumeNotice().get();
     const bool visible = !notice.text.empty() && !_help_active && !_browser_vm.modalInputActive() &&
                          !hostRenderingSuspended();
     const bool wasHidden = lv_obj_has_flag(_volume_notice, LV_OBJ_FLAG_HIDDEN);
@@ -602,13 +600,13 @@ void FilesApp::updateVolumeNoticeVisibility()
         auto text = notice.text;
         if (notice.connectedMountId) {
             if (const auto split = text.find('\n'); split != std::string::npos) text.resize(split);
-            if (browsing) {
-                text += _browser_vm.hasMultipleRemovableVolumes() ? local("\nU Choose drive", "\nU Vybrat disk") :
-                                                                   local("\nU Open", "\nU Otevřít");
-            }
+            text += _browser_vm.hasMultipleRemovableVolumes() ?
+                local("\nU Choose drive", "\nU Vybrat disk") : local("\nU Open drive", "\nU Otevřít disk");
         }
         const int height = text.find('\n') == std::string::npos ? 24 : 42;
-        const int y = browsing ? _browser_view.toastY(height) : 150 - height;
+        const auto* preview = _model.preview().page().get();
+        const int y = browsing ? _browser_view.toastY(height) :
+            preview && preview->usesWideFooter() && height == 42 ? 20 : 150 - height;
         if (browsing) _browser_view.setExternalToast(y, height);
         if (_notice_text != text || _notice_y != y || wasHidden) {
             _notice_text = text;

@@ -258,17 +258,28 @@ FileOperationResult FileBrowserModel::openRemovableVolumes()
     return {};
 }
 
-FileOperationResult FileBrowserModel::openVolume(uint64_t mountId)
+FileOperationResult FileBrowserModel::openVolume(uint64_t mountId, bool rememberLocation)
 {
     const auto* drive = volume(mountId);
     if (!drive || !internal::volumePresent(mountId)) {
         return disconnected();
     }
+    if (rememberLocation) return goToDirectory(drive->mount.target.string(), true);
     auto result = goToDirectory(drive->mount.target.string(), false);
     if (result) {
         _history.clear();
     }
     return result;
+}
+
+std::string FileBrowserModel::volumeDisplayName(uint64_t mountId) const
+{
+    const auto* drive = volume(mountId);
+    if (!drive) return {};
+    const auto hasSameName = [drive](const auto& other) { return other.name == drive->name; };
+    if (std::count_if(_volumes.begin(), _volumes.end(), hasSameName) <= 1) return drive->name;
+    const auto index = std::count_if(_volumes.data(), drive, hasSameName);
+    return drive->name + " #" + std::to_string(index + 1);
 }
 
 void FileBrowserModel::refreshPlaces(const std::string& preferredPath)
@@ -285,7 +296,7 @@ void FileBrowserModel::refreshPlaces(const std::string& preferredPath)
         return list.back();
     };
     for (const auto& volume : _volumes) {
-        auto& entry = addLocation(volume.mount.target, volume.name);
+        auto& entry = addLocation(volume.mount.target, volumeDisplayName(volume.mount.id));
         entry.mountId = volume.mount.id;
         entry.mountRoot = true;
         entry.freeBytes = freeSpace(volume.mount.target);
@@ -521,7 +532,7 @@ FileOperationResult FileBrowserModel::goBack()
 
     const fs::path current(_current_directory.get());
     const auto* drive = volume(_current_mount_id);
-    if ((drive && current == drive->mount.target) || current == current.root_path()) {
+    if (((drive && current == drive->mount.target) || current == current.root_path()) && _history.empty()) {
         showPlaces(current.string());
         return {};
     }
@@ -576,7 +587,8 @@ FileOperationResult FileBrowserModel::goToDirectory(const std::string& path, boo
 
     const std::string previous = _current_directory.get();
     if (pushHistory && previous != targetPath) {
-        _history.push_back({previous, pathString(requestedPath), _current_mount_id});
+        const auto* entry = selectedEntry();
+        _history.push_back({previous, entry ? entry->path : pathString(requestedPath), _current_mount_id});
     }
     _current_mount_id = 0;
     for (const auto& volume : internal::removableVolumes()) {

@@ -303,15 +303,21 @@ void collect(json& objects, std::vector<lv_obj_t*>& labels, lv_obj_t* obj,
     const auto child_count = lv_obj_get_child_count(obj);
     const auto* type = type_name(obj);
     const bool is_label = clazz == &lv_label_class;
+    if (is_label && lv_obj_get_style_text_opa(obj, LV_PART_MAIN) == LV_OPA_TRANSP &&
+        bg_opa == LV_OPA_TRANSP) hidden = true;
     const bool is_image = clazz == &lv_image_class && lv_image_get_src(obj);
     const bool custom_progress = lv_obj_has_flag(obj, progress_flag);
     const bool is_painted = is_label || is_image || custom_progress || clazz == &lv_bar_class ||
-                            clazz == &lv_button_class || clazz == &lv_textarea_class;
+                            clazz == &lv_button_class ||
+                            (clazz == &lv_textarea_class && lv_obj_get_user_data(obj) != &keyboard_proxy);
     const auto role = is_painted ? "content" : "surface";
     json data = {{"id", id}, {"parent", parent.empty() ? json(nullptr) : json(parent)},
                  {"type", type}, {"rect", rect.data()}, {"content", content.data()},
                  {"clip", visible.data()}, {"layer", layer}, {"z", z},
                  {"overlay", lv_obj_has_flag(obj, overlay_flag)},
+                 {"mono_separator", lv_obj_get_user_data(obj) == &mono_separator},
+                 {"mono_cross", lv_obj_get_user_data(obj) == &mono_cross},
+                 {"mono_frame", lv_obj_get_user_data(obj) == &mono_frame},
                  {"cover", lv_obj_has_flag(obj, overlay_flag) ||
                            (is_label && bg_opa == LV_OPA_COVER)},
                  {"role", role}, {"hidden", hidden}, {"audited", audited && !hidden},
@@ -321,6 +327,12 @@ void collect(json& objects, std::vector<lv_obj_t*>& labels, lv_obj_t* obj,
                                                                   std::min(rect.w, rect.h) / 2 : radius},
                  {"border_color", hex(rgb(lv_obj_get_style_border_color(obj, LV_PART_MAIN)))},
                  {"bg", hex(bg)}, {"bg_opa", bg_opa * opacity / 255}};
+    if (lv_obj_get_user_data(obj) == &mono_image) {
+        const int width = lv_image_get_transformed_width(obj);
+        const int height = lv_image_get_transformed_height(obj);
+        data["mono_image"] = {rect.x + rect.w / 2 - width / 2, rect.y + rect.h / 2 - height / 2, width, height};
+        data["mono_image_clip"] = clip.data();
+    }
     if (is_label) {
         labels.push_back(obj);
         add_text(data, obj, content, visible, fixed_clip, bg, opacity);

@@ -2,6 +2,7 @@
 
 #include "core/files_language.hpp"
 #include "views/ui_style.hpp"
+#include "preview/common/bottom_key_bar.hpp"
 #include <array>
 
 #include <spdlog/spdlog.h>
@@ -190,6 +191,8 @@ public:
         stopPlayer();
     }
 
+    bool usesWideFooter() const override { return true; }
+
     const std::string& title() const override
     {
         return _title;
@@ -220,8 +223,7 @@ public:
         _detail = ui::label(_root, 8, 86, 304, uiFont12());
         lv_obj_set_style_text_align(_detail, LV_TEXT_ALIGN_CENTER, 0);
         ui::hidden(_detail, true);
-        _keys = lv_obj_get_child(ui::caption(_root, 150, ""), 0);
-        lv_obj_set_width(_keys, 252);
+        _keys = std::make_unique<BottomKeyBar>(_root);
         refreshKeys();
         startPlayer();
     }
@@ -229,8 +231,9 @@ public:
     void detach() override
     {
         stopPlayer();
+        _keys.reset();
         if (_root) lv_obj_delete(_root);
-        _root = _status = _keys = nullptr;
+        _root = _status = nullptr;
     }
 
     void onKey(uint32_t key, FilesRouter& router) override
@@ -278,7 +281,7 @@ private:
     bool _failed   = false;
     lv_obj_t* _root = nullptr;
     lv_obj_t* _status = nullptr;
-    lv_obj_t* _keys = nullptr;
+    std::unique_ptr<BottomKeyBar> _keys;
     lv_obj_t* _heading = nullptr;
     lv_obj_t* _state = nullptr;
     lv_obj_t* _detail = nullptr;
@@ -335,16 +338,22 @@ private:
             const auto secondPart = seconds % 60;
             const auto status = std::string(local("Ⅱ Paused  ", "Ⅱ Pauza  ")) +
                 std::to_string(seconds / 60) + ":" + (secondPart < 10 ? "0" : "") + std::to_string(secondPart);
+            const int width = textWidth(status, uiFont12());
+            lv_obj_set_x(_state, 312 - width);
+            lv_obj_set_width(_state, width);
             lv_label_set_text(_state, status.c_str());
-            titleWidth -= textWidth(status, uiFont12()) + 8;
+            titleWidth -= width + 8;
         }
         lv_obj_set_width(_heading, titleWidth);
         ui::line(_heading, _title, titleWidth, uiFont14(), std::string::npos, true);
-        const auto hint = keyHints({ready ? (paused ? local("Space Play", "Mezera Hrát") :
-                                                     local("Space Pause", "Mezera Pauza")) : "",
-                                    ready ? local("Z← C→ Seek", "Z← C→ Posun") : "",
-                                    local("Esc Back", "Esc Zpět")}, {}, 252);
-        ui::keyLegend(_keys, hint);
+        if (ready) {
+            _keys->setSlots({{8, 121, paused ? local("Space Play", "Mezera Pokračovat") :
+                                              local("Space Pause", "Mezera Pauza")},
+                             {136, 83, local("Z← C→ Seek", "Z← C→ Posun")},
+                             {228, 53, local("Esc Back", "Esc Zpět")}});
+        } else {
+            _keys->setItems({});
+        }
     }
 
     void showFailure()

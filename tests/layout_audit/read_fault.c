@@ -16,7 +16,11 @@ ssize_t read(int fd, void *buffer, size_t size)
         if (length >= 0) {
             target[length] = '\0';
             if (strcmp(target, fixture) == 0) {
-                errno = getenv("FILES_AUDIT_DENY_READ") ? EACCES : EIO;
+                const char *kind = getenv("FILES_AUDIT_READ_ERROR");
+                if (getenv("FILES_AUDIT_DENY_READ")) errno = EACCES;
+                else if (kind && strcmp(kind, "missing") == 0) errno = ENOENT;
+                else if (kind && strcmp(kind, "other") == 0) errno = EINVAL;
+                else errno = EIO;
                 return -1;
             }
         }

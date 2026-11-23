@@ -58,7 +58,7 @@ std::string fileTitle(const AudioPreviewFile& file)
 
 std::string timeText(float seconds)
 {
-    int total = std::max(0, static_cast<int>(std::round(seconds)));
+    int total = std::max(0, static_cast<int>(seconds));
     int hours = total / 3600;
     int mins  = total / 60 % 60;
     int secs  = total % 60;
@@ -74,20 +74,10 @@ std::string timeText(float seconds)
 
 std::string remainingTimeText(float durationSec, float progressSec)
 {
-    const auto time = timeText(durationSec - progressSec);
+    const auto time = timeText(std::ceil(durationSec - progressSec));
     return time == "0:00" ? time : "-" + time;
 }
 
-const void* speedIcon(float speed)
-{
-    if (speed >= 5.0f) {
-        return &image_icon_playback_5x;
-    }
-    if (speed >= 2.0f) {
-        return &image_icon_playback_2x;
-    }
-    return &image_icon_playback_1x;
-}
 
 }  // namespace
 
@@ -110,7 +100,7 @@ public:
 
     void load(const AudioPreviewFile& file)
     {
-        _duration_sec = static_cast<float>(file.durationSec);
+        _duration_sec = file.durationSec;
         _progress_sec = 0.0f;
         decode(file.entry.path, file.durationSec);
         lv_obj_invalidate(_panel->raw_ptr());
@@ -140,7 +130,7 @@ private:
         return lv_color_hex(_color);
     }
 
-    void decode(const std::string& path, uint32_t durationSec)
+    void decode(const std::string& path, float durationSec)
     {
         _bars.assign(kWaveformVisibleBarCount, 0.0f);
 
@@ -154,7 +144,7 @@ private:
         ma_uint64 total_frames = 0;
         result                 = ma_decoder_get_length_in_pcm_frames(&decoder, &total_frames);
         if (result != MA_SUCCESS || total_frames == 0) {
-            total_frames = static_cast<ma_uint64>(durationSec) * kWaveformSampleRate;
+            total_frames = static_cast<ma_uint64>(durationSec * kWaveformSampleRate);
         }
 
         const size_t bar_count =
@@ -417,10 +407,12 @@ void AudioPreviewView::renderState(AudioPlaybackState state)
     ui::hidden(_speed_label, failed);
     const bool paused = state == AudioPlaybackState::Paused;
     const bool ended = state == AudioPlaybackState::Stopped;
-    const auto* status = paused ? local("Paused", "Pauza") : ended ? local("Ended", "Konec") : "";
-    ui::hidden(_state_label, !*status);
+    const auto* status = failed ? "" : paused ? local("Paused", "Pauza") :
+        ended ? local("Ended", "Konec") : state == AudioPlaybackState::Playing ?
+        local("Playing", "Hraje") : local("Ready", "Připraveno");
+    ui::hidden(_state_label, failed);
     lv_label_set_text(_state_label, status);
-    const int width = *status ? 271 - textWidth(status, uiFont12()) : kTitleWidth;
+    const int width = failed ? 304 : 267 - textWidth(status, uiFont12());
     lv_obj_set_width(_title_label->raw_ptr(), width);
     ui::line(_title_label->raw_ptr(), fileTitle(_view_model.file().get()), width, uiFont14(), std::string::npos, true);
     ui::hidden(_elapsed_label->raw_ptr(), failed);
@@ -441,7 +433,11 @@ void AudioPreviewView::renderFile(const AudioPreviewFile& file)
 
 void AudioPreviewView::renderProgress(float progressSec)
 {
-    const float duration = static_cast<float>(_view_model.file().get().durationSec);
+    const float duration = _view_model.file().get().durationSec;
+    const auto state = _view_model.state().get();
+    if (state == AudioPlaybackState::Playing && progressSec >= duration && duration > 0) {
+        progressSec = std::nextafter(duration, 0.0f);
+    }
     if (_waveform) {
         _waveform->setProgress(progressSec);
     }
@@ -475,18 +471,19 @@ void AudioPreviewView::updateKeyBar()
         return;
     }
 
-    if (_view_model.state().get() == AudioPlaybackState::Error) {
+    const auto state = _view_model.state().get();
+    if (state == AudioPlaybackState::Error) {
         _key_bar->setItems({});
         return;
     }
-    _key_bar->setItems({
-        {static_cast<uint32_t>(_canRewind ? '5' : 0), &image_icon_playback_replay, "−10"},
-        {'6', _view_model.state().get() == AudioPlaybackState::Playing ? &image_icon_playback_pause
-                                                                       : &image_icon_playback_play,
-         _view_model.state().get() == AudioPlaybackState::Stopped ? local("Replay", "Znovu") : nullptr},
-        {static_cast<uint32_t>(_canAdvance ? '7' : 0), &image_icon_playback_forward, "+10"},
-        {'8', speedIcon(_view_model.speed().get())},
-    });
+    const auto* action = state == AudioPlaybackState::Playing ? local("Pause", "Pauza") :
+        state == AudioPlaybackState::Stopped ? local("Replay", "Znovu") :
+        state == AudioPlaybackState::Paused ? local("Resume", "Pokračovat") : local("Play", "Hrát");
+    _key_bar->setSlots({{8, 43, _canRewind ? "5 −10 s" : ""},
+                        {56, 81, std::string("6 ") + action},
+                        {140, 43, _canAdvance ? "7 +10 s" : ""},
+                        {185, 62, local("8 Speed", "8 Rychlost")},
+                        {251, 52, local("Esc Back", "Esc Zpět")}});
 }
 
 void AudioPreviewView::onStateChanged(void* context, const AudioPlaybackState& state)

@@ -896,7 +896,10 @@ FilesystemTransferResult stagedCopyNoReplace(const fs::path& source, const fs::p
     const auto discardStage = [&](FilesystemTransferResult result) {
         std::error_code error;
         const bool hadPayload = fs::exists(fs::symlink_status(stagedPayload, error));
-        if (!cleanupStage(stageDirectory)) {
+        const bool removed = cleanupStage(stageDirectory);
+        if (error && error != std::errc::no_such_file_or_directory && removed) {
+            result.destinationState = TransferDestination::CleanupUnverified;
+        } else if (!removed) {
             result.destinationState = TransferDestination::CleanupFailed;
         } else if (hadPayload) {
             result.destinationState = TransferDestination::PartialRemoved;

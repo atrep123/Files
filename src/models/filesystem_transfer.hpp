@@ -28,7 +28,7 @@ enum class FilesystemTransferFailure {
     SyncFailed,
 };
 
-enum class TransferDestination { NotPublished, PartialRemoved, CleanupFailed, Published };
+enum class TransferDestination { NotPublished, PartialRemoved, CleanupFailed, CleanupUnverified, Published };
 
 struct FilesystemTransferResult {
     FilesystemTransferFailure failure = FilesystemTransferFailure::None;

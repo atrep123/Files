@@ -29,6 +29,8 @@ private:
     lv_obj_t* _path = nullptr;
     lv_obj_t* _free = nullptr;
     lv_obj_t* _keys = nullptr;
+    lv_obj_t* _menu_error = nullptr;
+    lv_obj_t* _menu_error_icon = nullptr;
     lv_obj_t* _menu_exit = nullptr;
     lv_obj_t* _no_usb = nullptr;
     lv_obj_t* _toast = nullptr;

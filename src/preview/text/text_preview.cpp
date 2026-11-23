@@ -46,7 +46,7 @@ constexpr uint32_t kHoldRepeatDelayMs   = 320;
 constexpr uint32_t kHoldRepeatMs        = 90;
 constexpr uint32_t kTextColor           = 0xFFFFFF;
 constexpr uint32_t kMutedTextColor      = ui::error;
-constexpr uint32_t kScrollbarTrackColor = 0x2B2B2B;
+constexpr uint32_t kScrollbarTrackColor = ui::track;
 constexpr uint32_t kScrollbarThumbColor = ui::secondary;
 constexpr uint64_t kMaxPreviewBytes     = 64 * 1024;
 constexpr size_t kTextSniffBytes        = 4096;
@@ -124,7 +124,7 @@ bool readTextSample(const FileEntry& file, std::string& sample)
 #endif
 }
 
-std::optional<std::string> readTextContent(const FileEntry& file, int& error)
+std::optional<std::string> readTextContent(const FileEntry& file, int& error, bool& limited)
 {
 #if defined(__unix__) || defined(__APPLE__)
     // Open non-blocking and verify the node after opening as well.  The status
@@ -167,9 +167,7 @@ std::optional<std::string> readTextContent(const FileEntry& file, int& error)
     }
     ::close(fd);
     content.resize(offset);
-    if (file_size > kMaxPreviewBytes) {
-        content += "\n\n...";
-    }
+    limited = file_size > kMaxPreviewBytes;
     return content;
 #else
     std::ifstream stream(file.path, std::ios::binary);
@@ -186,9 +184,7 @@ std::optional<std::string> readTextContent(const FileEntry& file, int& error)
         return std::nullopt;
     }
     content.resize(static_cast<size_t>(stream.gcount()));
-    if (file.size > kMaxPreviewBytes) {
-        content += "\n\n...";
-    }
+    limited = file.size > kMaxPreviewBytes;
     return content;
 #endif
 }
@@ -202,7 +198,7 @@ public:
     explicit TextPreviewPage(const FileEntry& file) : _title(file.name)
     {
         int error = 0;
-        auto content = readTextContent(file, error);
+        auto content = readTextContent(file, error, _limited);
         if (content) {
             _content = std::move(*content);
         } else {
@@ -236,7 +232,19 @@ public:
         _root->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
 
         createTextPanel();
-        ui::caption(_root->raw_ptr(), 0, _title.empty() ? local("Preview", "Náhled") : _title, uiFont14());
+        auto* header = ui::caption(_root->raw_ptr(), 0, _title.empty() ? local("Preview", "Náhled") : _title, uiFont14());
+#ifdef FILES_LAYOUT_AUDIT
+        layout_audit::markMonoSeparator(header);
+#endif
+        if (_limited) {
+            const auto* notice = local("First 64 KiB", "Prvních 64 KiB");
+            const int width = textWidth(notice, uiFont12());
+            auto* status = ui::label(header, 312 - width, 2, width, uiFont12(), ui::secondary);
+            lv_label_set_text(status, notice);
+            auto* title = lv_obj_get_child(header, 0);
+            lv_obj_set_width(title, 296 - width);
+            ui::line(title, _title, 296 - width, uiFont14(), std::string::npos, true);
+        }
         const auto footer = ui::caption(_root->raw_ptr(), 150, "");
         _keys = lv_obj_get_child(footer, 0);
         lv_obj_set_width(_keys, 252);
@@ -316,6 +324,7 @@ private:
     std::string _title;
     std::string _content;
     bool _read_failed = false;
+    bool _limited = false;
     std::string _read_reason;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _root;
     lv_obj_t* _keys = nullptr;

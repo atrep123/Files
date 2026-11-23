@@ -32,6 +32,10 @@ BottomKeyBar::~BottomKeyBar() { lv_obj_delete(_bar); }
 
 void BottomKeyBar::setItems(std::initializer_list<Item> items)
 {
+    for (auto* slot : _slots) {
+        if (slot) ui::hidden(slot, true);
+    }
+    ui::hidden(_label, false);
     std::string text;
     for (const auto& item : items) {
         if (item.key == 0) continue;
@@ -42,6 +46,25 @@ void BottomKeyBar::setItems(std::initializer_list<Item> items)
     }
     const auto keys = keyHints({text, local("Esc Back", "Esc Zpět")}, {}, 252);
     ui::keyLegend(_label, keys);
+    show(true);
+}
+
+void BottomKeyBar::setSlots(std::initializer_list<Slot> slots)
+{
+    ui::hidden(_label, true);
+    auto slot = slots.begin();
+    for (auto*& label : _slots) {
+        if (slot == slots.end()) {
+            if (label) ui::hidden(label, true);
+            continue;
+        }
+        if (!label) label = ui::label(_bar, slot->x, 2, slot->width, uiFont12());
+        lv_obj_set_x(label, slot->x);
+        lv_obj_set_width(label, slot->width);
+        ui::hidden(label, slot->text.empty());
+        ui::keyLegend(label, slot->text);
+        ++slot;
+    }
     show(true);
 }
 

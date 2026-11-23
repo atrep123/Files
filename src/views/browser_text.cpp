@@ -14,8 +14,12 @@ std::vector<size_t> characterEnds(const std::string& text)
 {
     std::vector<size_t> ends{0};
     for (uint32_t offset = 0; offset < text.size();) {
-        lv_text_encoded_next(text.c_str(), &offset);
-        ends.push_back(offset);
+        const auto codepoint = lv_text_encoded_next(text.c_str(), &offset);
+        const bool combiningMark = (codepoint >= 0x0300 && codepoint <= 0x036f) ||
+                                   (codepoint >= 0x1ab0 && codepoint <= 0x1aff) ||
+                                   (codepoint >= 0x1dc0 && codepoint <= 0x1dff);
+        if (combiningMark && ends.size() > 1) ends.back() = offset;
+        else ends.push_back(offset);
     }
     return ends;
 }
@@ -78,6 +82,16 @@ std::string fitText(std::string text, int width, const lv_font_t* font, size_t l
         if (space != std::string::npos && space - ends[right] <= 5) {
             right = static_cast<size_t>(std::lower_bound(ends.begin(), ends.end(), space + 1) - ends.begin());
         }
+    }
+    if (preserveExtension) {
+        // If word trimming freed room, spend it on more of the distinctive prefix.
+        size_t longest = left;
+        for (size_t end = left + 1; end + 1 < right && fits(build(end, right), width, limit, font); ++end) {
+            if (text[ends[end] - 1] == ' ') continue;
+            longest = end;
+            if (text[ends[end]] == ' ') left = end;
+        }
+        if (longest > left && textWidth(build(left, right), font) + 14 < width) left = longest;
     }
     return build(left, right);
 }
@@ -147,9 +161,10 @@ std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, boo
     const auto* movement = canMove ? "F↑ X↓" : "";
     const auto* usbHint = usb ? "U USB" : "";
     if (menu) {
-        const auto* usbAction = !usb ? "" : multipleUsb ? local("U Drives", "U Disky") :
-                                                         local("U Open USB", "U Otevřít USB");
-        return keyHints({movement, local("Enter Select", "Enter Vybrat"), back}, {usbAction});
+        const auto* usbAction = !usb ? "" : multipleUsb ? local("U Choose drive", "U Vybrat disk") :
+                                                         local("U Open drive", "U Otevřít disk");
+        if (!usb) return keyHints({movement, local("Enter Select", "Enter Vybrat"), back}, {});
+        return keyHints({movement, "Enter ↵", back, usbAction}, {});
     }
     if (places) {
         if (eject) {
@@ -158,11 +173,14 @@ std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, boo
         return keyHints({movement, selected ? open : "", actions}, {usbHint});
     }
     if (eject) {
-        const auto* driveMovement = canMove && inCzech() ? "F↑X↓" : movement;
-        return keyHints({driveMovement, selected ? open : "", ejectHint, actions}, {back});
+        const auto* driveMovement = canMove ? "F↑X↓" : "";
+        auto keys = keyHints({driveMovement, selected ? open : "", ejectHint, actions, back}, {});
+        if (keys.find(back) == std::string::npos)
+            keys = keyHints({driveMovement, selected ? "Enter ↵" : "", ejectHint, actions, back}, {});
+        return keys;
     }
     auto keys = keyHints({movement, selected ? open : "", actions, back}, {usbHint});
-    if (usb && keys.find(usbHint) == std::string::npos) {
+    if (keys.find(back) == std::string::npos || (usb && keys.find(usbHint) == std::string::npos)) {
         keys = keyHints({movement, selected ? "Enter ↵" : "", actions, back}, {usbHint});
     }
     return keys;
