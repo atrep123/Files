@@ -54,6 +54,10 @@ if [ -e "$UX2_ROOT/eject-fails" ]; then
     printf '%s\n' 'Could not flush the filesystem.' 'Unmount request was rejected by the device.' 'Final journal flush returned an I/O error.' >&2
     exit 1
 fi
+for attempt in $(seq 1 200); do
+    [ ! -e "$UX2_ROOT/hold-eject" ] && break
+    sleep 0.05
+done
 sleep 0.40
 exec /usr/bin/umount -- "$4"
 EOF

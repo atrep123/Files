@@ -291,7 +291,8 @@ private:
 
     void bind(const Row& row, const RowData& data)
     {
-        const int used = data.metadata.empty() ? (data.checked ? 24 : 0) : metadataWidth + 8;
+        const int sizeWidth = std::min(metadataWidth, textWidth(data.metadata, uiFont12()) + 1);
+        const int used = data.metadata.empty() ? (data.checked ? 24 : 0) : sizeWidth + 8;
         const int inset = data.shortcut ? textWidth(data.shortcut, uiFont12()) + 4 : 0;
         const int width = 276 - used - inset;
         ui::hidden(row.check, !data.checked);
@@ -301,7 +302,9 @@ private:
         lv_obj_set_width(row.name, width);
         ui::line(row.name, data.name, width, uiFont14(), std::string::npos, !data.directory);
         if (!data.metadata.empty()) {
-            ui::line(row.metadata, data.metadata, metadataWidth, uiFont12());
+            lv_obj_set_x(row.metadata, 308 - sizeWidth);
+            lv_obj_set_width(row.metadata, sizeWidth);
+            ui::line(row.metadata, data.metadata, sizeWidth, uiFont12());
         }
         ui::hidden(row.metadata, data.metadata.empty());
         ui::hidden(row.icon, !data.icon);
@@ -362,6 +365,7 @@ public:
           _instruction(ui::label(_box, 8, 69, 288, uiFont14())),
           _body(ui::box(_box, 8, 30, 288, 98, ui::dialog)),
           _text(ui::label(_body, 0, 0, 282, uiFont14())),
+          _version(ui::label(_body, 0, 0, 282, uiFont14())),
           _indented(ui::label(_body, 4, 0, 278, uiFont14())),
           _continuation(ui::label(_body, 0, 0, 282, uiFont14())),
           _technical(ui::label(_body, 0, 0, 282, uiFont12(), ui::secondary)),
@@ -493,7 +497,9 @@ public:
         const int statusWidth = dialog.metadataStatus.empty() ? 0 : textWidth(dialog.metadataStatus, uiFont12()) + 1;
         const int metadataWidth = 288 - (statusWidth ? statusWidth + 8 : 0);
         lv_obj_set_width(_meta, metadataWidth);
-        ui::line(_meta, fitPackageVersion(dialog.metadata, metadataWidth), metadataWidth, uiFont12());
+        const std::string versionPrefix = !dialog.fullVersion.empty() ? local("Version: ", "Verze: ") : "";
+        ui::line(_meta, versionPrefix + fitPackageVersion(dialog.metadata,
+                 metadataWidth - textWidth(versionPrefix, uiFont12())), metadataWidth, uiFont12());
         ui::hidden(_metaStatus, !statusWidth);
         if (statusWidth) {
             lv_obj_set_x(_metaStatus, 296 - statusWidth);
@@ -561,8 +567,8 @@ public:
             body = fitText(std::move(body), 282, uiFont14());
         }
         const std::string marker = std::string(local("Details", "Podrobnosti")) + "\n";
-        std::string diagnostics;
-        if (dialog.tone == DialogTone::Error) {
+        auto diagnostics = dialog.diagnosticText;
+        if (diagnostics.empty() && dialog.tone == DialogTone::Error) {
             const auto begin = body.rfind(marker, 0) == 0 ? 0 : body.find("\n" + marker);
             if (begin != std::string::npos) {
                 const auto end = begin + (begin == 0 ? 0 : 1) + marker.size();
@@ -604,6 +610,8 @@ public:
         lv_obj_set_style_text_color(_text, lv_color_hex(ui::white), 0);
         lv_obj_update_layout(_box);
         if (!body.empty()) bodyBottom = lv_obj_get_height(_text);
+        addBlock(_version, dialog.fullVersion.empty() ? "" :
+                 local("Version\n", "Verze\n") + dialog.fullVersion, uiFont14());
         addBlock(_technical, dialog.technicalPath, uiFont12());
         addBlock(_indented, dialog.indentedText, uiFont14());
         addBlock(_continuation, dialog.afterIndentedText, uiFont14());
@@ -724,6 +732,7 @@ private:
         if (value.empty()) {
             lv_obj_set_style_text_font(_inputText, uiFont12(), 0);
             lv_obj_set_style_text_color(_inputText, lv_color_hex(ui::secondary), 0);
+            lv_obj_set_x(_inputText, 16);
             lv_label_set_text(_inputText, _inputPlaceholder);
             lv_obj_set_x(_inputCursor, 11);
             return;
@@ -751,6 +760,7 @@ private:
         auto end = at;
         while (end < last && width(first, end + 1) <= available - caretSpace) ++end;
         const auto visible = std::string(value.substr(offsets[first], offsets[end] - offsets[first]));
+        lv_obj_set_x(_inputText, textStart);
         lv_obj_set_style_text_font(_inputText, uiFont14(), 0);
         lv_obj_set_style_text_color(_inputText, lv_color_hex(ui::white), 0);
         std::string displayed = visible;
@@ -895,6 +905,7 @@ private:
     lv_obj_t* _instruction;
     lv_obj_t* _body;
     lv_obj_t* _text;
+    lv_obj_t* _version;
     lv_obj_t* _indented;
     lv_obj_t* _continuation;
     lv_obj_t* _technical;

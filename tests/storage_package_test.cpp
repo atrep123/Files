@@ -226,7 +226,7 @@ void testDisconnectDuringCopy(const fs::path& mount, const fs::path& temp)
     const auto copied = copyPathToDirectory(source, destination.path(), [&] {
         for (const auto& item : fs::directory_iterator(mount)) {
             if (item.path().filename().string().rfind(".files-transfer-", 0) == 0) {
-                copiedIntoStage = fs::is_regular_file(item.path() / "payload");
+                copiedIntoStage = fs::is_regular_file(item.path() / source.filename());
                 break;
             }
         }

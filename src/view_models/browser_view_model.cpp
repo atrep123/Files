@@ -331,12 +331,11 @@ void BrowserViewModel::pollVolumes(uint32_t nowMs)
                 const auto source = std::find_if(changes.removed.begin(), changes.removed.end(),
                     [previousMountId](const auto& drive) { return drive.mount.id == previousMountId; });
                 const auto text = source == changes.removed.end() ? local("Drive disconnected", "Disk odpojen") :
-                    local("Drive ", "Disk ") + source->name + local(" disconnected.", " byl odpojen.");
-                if (deleting && source != changes.removed.end()) {
-                    _return_notice = VolumeNotice{
-                        volumeNoticeLine(source->name, local("Drive ", "Disk "), local(" disconnected.", " byl odpojen.")) +
-                        local("\nDeletion did not start.", "\nMazání se nespustilo."), 0, DialogTone::Warning};
-                }
+                    volumeNoticeLine(source->displayName(), local("Drive ", "Disk "),
+                                     local(" disconnected.", " byl odpojen."));
+                _return_notice = VolumeNotice{
+                    text + (deleting ? local("\nDeletion did not start.", "\nMazání se nespustilo.") : ""),
+                    0, DialogTone::Warning};
                 _package_dialog.set({PackageDialogMode::Result, title,
                     text + (deleting ? local("\nDeletion did not start.", "\nMazání se nespustilo.") :
                             creating ? "" :
@@ -362,10 +361,10 @@ void BrowserViewModel::pollVolumes(uint32_t nowMs)
                 internal::clearSecret(_package_password);
                 PackageDialog lost{PackageDialogMode::Result, local("Debian package", "Balíček Debian"), {}, false,
                                    DialogTone::Warning, _package_file_name};
-                lost.fixedStatus = local("Source drive disconnected: ", "Zdrojový disk odpojen: ") + drive.name;
-                lost.text = local("Reconnect drive ", "Znovu připojte disk ") + drive.name + ".";
+                lost.fixedStatus = local("Source drive disconnected: ", "Zdrojový disk odpojen: ") + drive.displayName();
+                lost.text = local("Reconnect drive ", "Znovu připojte disk ") + drive.displayName() + ".";
                 _return_notice = VolumeNotice{
-                    volumeNoticeLine(drive.name, local("Source drive ", "Zdrojový disk "),
+                    volumeNoticeLine(drive.displayName(), local("Source drive ", "Zdrojový disk "),
                                      local(" disconnected", " odpojen")), 0, DialogTone::Warning};
                 if (const auto* account = getpwuid(getuid()); account && account->pw_dir) {
                     _model.browser().showPlaces(account->pw_dir);
@@ -384,24 +383,27 @@ void BrowserViewModel::pollVolumes(uint32_t nowMs)
                 (mode == PackageDialogMode::ConfirmEject || mode == PackageDialogMode::Ejecting);
             if (!transferDrive && !ejectDrive && !packageDrive && !(closedEdit && id == previousMountId)) {
                 if (closedPreview && id == previousMountId) {
-                    auto text = volumeNoticeLine(drive.name, local("Drive ", "Disk "),
+                    auto text = volumeNoticeLine(drive.displayName(), local("Drive ", "Disk "),
                                                  local(" disconnected.", " byl odpojen.")) +
                                 local("\nPreview closed", "\nNáhled zavřen");
                     _volume_notice.set({});
                     _notice_started_at = _last_tick;
                     _volume_notice.set({std::move(text), 0, DialogTone::Warning});
                 } else {
-                    showVolumeNotice({volumeNoticeLine(drive.name, local("Drive ", "Disk "),
+                    showVolumeNotice({volumeNoticeLine(drive.displayName(), local("Drive ", "Disk "),
                         local(" disconnected.", " byl odpojen.")), 0, DialogTone::Warning});
                 }
             }
         }
         for (const auto& drive : changes.arrived) {
-            showVolumeNotice({volumeNoticeLine(drive.name, local("Drive ", "Disk "), local(" connected", " připojen")) +
+            showVolumeNotice({volumeNoticeLine(drive.displayName(), local("Drive ", "Disk "), local(" connected", " připojen")) +
                               "\n", drive.mount.id, DialogTone::Success});
         }
         if (_package_dialog.get().mode == PackageDialogMode::ConfirmEject && !_model.browser().volume(_eject_mount_id)) {
             _eject_mount_id = 0;
+            _return_notice = VolumeNotice{
+                volumeNoticeLine(_eject_name, local("Drive ", "Disk "), local(" disconnected.", " byl odpojen.")),
+                0, DialogTone::Warning};
             _package_dialog.set({PackageDialogMode::Result, local("Drive disconnected", "Disk byl odpojen"),
                                  _eject_name, false, DialogTone::Error});
         }
@@ -533,6 +535,8 @@ void BrowserViewModel::openSelected()
     }
 
     if (!openedFile.path.empty()) {
+        const auto& notice = _volume_notice.get();
+        if (!notice.connectedMountId && notice.tone == DialogTone::Warning) advanceVolumeNotice();
         if (openedFile.extension == ".deb") {
             startPackageRead(openedFile);
         } else if (_model.preview().open(openedFile)) {
@@ -780,7 +784,7 @@ void BrowserViewModel::confirmRename()
                                                    localizedMessage(message)) +
                     std::string(pending.creating ? local("\nChoose another location.", "\nZvolte jiné umístění.") :
                         local("\nCopy the file to a writable folder.\nThen rename the copy.",
-                              "\nZkopírujte soubor na jiný disk pro zápis.\nPak kopii přejmenujte.")),
+                              "\nZkopírujte soubor do zapisovatelné složky.\nPak kopii přejmenujte.")),
                 false, DialogTone::Error, name});
         } else {
             status().set(std::move(message));
@@ -949,7 +953,7 @@ void BrowserViewModel::tickStorage(uint32_t nowMs)
                 text = local("Destination file was written.", "Cílový soubor byl zapsán.");
             } else if (state == Destination::CleanupFailed) {
                 text = local("Reconnect and check for a partial copy.\nIncomplete copy/",
-                             "Možnou neúplnou kopii hledejte zde\nNedokončená kopie/") + destinationName;
+                             "Připojte disk a zkontrolujte soubor.\nNedokončená kopie/") + destinationName;
             } else if (state == Destination::PartialRemoved) {
                 text = local("Partial copy removed from destination.", "Neúplná kopie byla v cíli smazána.");
             } else if (state == Destination::CleanupUnverified) {
@@ -1134,7 +1138,7 @@ void BrowserViewModel::startPackageRead(const FileEntry& entry)
     _package_source_mount_id = entry.mountId;
     _package_file_name = entry.name;
     const auto* drive = _model.browser().volume(entry.mountId);
-    _package_source_name = drive ? drive->name : std::string{};
+    _package_source_name = drive ? drive->displayName() : std::string{};
     _package_dialog.set({PackageDialogMode::Reading, local("Debian package", "Balíček Debian"),
                          local("Checking package…", "Ověřuji balíček…"), false, DialogTone::Normal, entry.name});
     _package_read = std::async(std::launch::async, [path = entry.path, mountId = entry.mountId] {
@@ -1183,7 +1187,7 @@ void BrowserViewModel::tickPackage(uint32_t nowMs)
                 const auto& metadata = _prepared_deb->metadata;
                 review.identity = metadata.name;
                 review.metadata = metadata.version + " · " + metadata.architecture;
-                review.rootScripts = metadata.hasInstallScripts;
+                review.rootScripts = metadata.hasInstallScripts && inspection.installable;
                 const auto* store = inspection.storeHelperPresent ? local("Store available", "Store dostupný") :
                     local("Store unavailable · install via APT", "Store je nedostupný. Použije se APT.");
                 const bool dependenciesPresent = !metadata.depends.empty() || !metadata.preDepends.empty();
@@ -1201,26 +1205,26 @@ void BrowserViewModel::tickPackage(uint32_t nowMs)
                     }
                 } else {
                     review.fixedStatus = local("Installation blocked.", "Instalace zablokována.");
-                    review.text = inspection.problem.find("dependency resolution failed") != std::string::npos
-                        ? local("APT could not resolve dependencies.", "APT nedokázal vyřešit závislosti.")
-                        : local("APT could not verify the plan.", "Nelze ověřit plán APT.");
                     const auto details = inspection.problem.find("\n\n");
                     if (details != std::string::npos) {
-                        auto diagnostic = inspection.problem.substr(details + 2);
-                        const auto package = diagnostic.find(" " + metadata.name);
-                        if (package != std::string::npos) diagnostic[package] = '\n';
-                        review.text = diagnostic;
-                        review.metadataStatus = local("APT output", "Výpis APT");
+                        review.diagnosticHeading = local("APT output", "Výpis APT");
+                        review.diagnosticText = inspection.problem.substr(details + 2);
                     }
+                    const auto& diagnostic = review.diagnosticText;
+                    const bool missingDependencies = diagnostic.find("dependency resolution failed") != std::string::npos ||
+                        diagnostic.find("unmet dependencies") != std::string::npos ||
+                        diagnostic.find("is not installable") != std::string::npos;
+                    review.text = missingDependencies
+                        ? local("Required packages are unavailable.\nCheck your package sources.",
+                                "Chybí potřebné balíčky.\nZkontrolujte zdroje balíčků.")
+                        : local("Could not verify the APT plan.\nCheck the APT output below.",
+                                "Nelze ověřit plán APT.\nProjděte výpis APT níže.");
                 }
                 if (inspection.installable && textWidth(review.metadata, uiFont12()) +
                     textWidth(review.metadataStatus, uiFont12()) + 8 > 288) {
-                    auto version = metadata.version;
-                    const auto revision = version.rfind('-');
-                    if (revision != std::string::npos) version.insert(revision, "\n");
-                    review.text += local("\nVersion: ", "\nVerze: ") + version;
+                    review.fullVersion = metadata.version;
                 }
-                if (dependenciesPresent || inspection.installable) {
+                if (inspection.installable || (review.diagnosticText.empty() && dependenciesPresent)) {
                     if (!review.text.empty()) review.text += "\n";
                     review.text += local("Dependencies: ", "Závislosti: ");
                     auto dependencies = metadata.preDepends;
@@ -1260,11 +1264,10 @@ void BrowserViewModel::tickPackage(uint32_t nowMs)
                 } else {
                     review.text = local("Get a fresh copy of the package.", "Získejte novou kopii balíčku.");
                     if (details != std::string::npos) {
-                        review.text += local("\nDetails\n", "\nPodrobnosti\n") + inspection.text.substr(details + 2);
-                        if (inspection.text.rfind("Damaged Debian package", 0) == 0 ||
-                            inspection.text.rfind("Invalid or unreadable Debian package", 0) == 0) {
-                            review.diagnosticHeading = local("dpkg-deb output", "Výpis dpkg-deb");
-                        }
+                        review.diagnosticHeading = inspection.text.rfind("Damaged Debian package", 0) == 0 ||
+                            inspection.text.rfind("Invalid or unreadable Debian package", 0) == 0
+                            ? local("dpkg-deb output", "Výpis dpkg-deb") : local("Details", "Podrobnosti");
+                        review.diagnosticText = inspection.text.substr(details + 2);
                     }
                 }
             }

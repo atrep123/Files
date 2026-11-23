@@ -12,6 +12,12 @@ struct RemovableVolume {
     std::filesystem::path disk;
     std::string name;
     bool powerOff = false;
+    unsigned displayNumber = 0;
+
+    std::string displayName() const
+    {
+        return displayNumber ? name + " #" + std::to_string(displayNumber) : name;
+    }
 };
 
 std::vector<RemovableVolume> removableVolumes(const std::vector<MountRecord>& mounts,

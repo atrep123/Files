@@ -52,6 +52,8 @@ struct PackageDialog {
     std::string afterIndentedText;
     std::string technicalPath;
     std::string diagnosticHeading;
+    std::string diagnosticText;
+    std::string fullVersion;
 };
 
 struct VolumeNotice {

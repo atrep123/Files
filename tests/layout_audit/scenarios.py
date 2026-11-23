@@ -355,7 +355,7 @@ def exercise_browser():
         key("u")
         capture("usb-connected-fifth-row-open", expected="UX OTHER")
         key("Escape")
-        assert_selected(capture("usb-connected-fifth-row-return", expected="04.txt"), "04.txt")
+        assert_selected(capture("usb-connected-fifth-row-return", expected=("04.txt", say("↵ Open", "↵ Otevřít"))), "04.txt")
     finally:
         stop(app)
         if os.path.ismount(other[0]):
@@ -612,7 +612,8 @@ def exercise_usb_interruptions():
         capture("deb-source-disconnected", delay=.88,
                 expected=say("Source drive disconnected", "Zdrojový disk odpojen"))
         key("Escape")
-        assert_selected(capture("deb-source-disconnected-return", expected=(say("Source drive", "Zdrojový disk"), "UX COPY")),
+        assert_selected(capture("deb-source-disconnected-return", expected=(say("Source drive", "Zdrojový disk"), "UX COPY",
+                                  say("Enter Open", "Enter Otevřít"))),
                         say("Home", "Domů"))
         detach(other[0], lazy=True)
         attach(copy)
@@ -838,7 +839,8 @@ def exercise_copy_disconnect(from_usb, move=False):
                 time.sleep(5.95)
                 action(3)
                 capture("move-clipboard", expected=(say("Tab → Move here", "Tab → Přesunout sem"),
-                                                    say("U Open drive", "U Otevřít disk")))
+                                                    say("U Open drive", "U Otevřít disk"),
+                                                    say("↵ Open", "↵ Otevřít")))
                 detach(mount)
                 capture("wait-move-target-detached", expected=say("disconnected", "odpojen"), keep=False)
                 attach(copy)
@@ -919,7 +921,7 @@ def exercise_retained_copy(long_name=False):
         wait_for(marker.exists)
         detach(mount, lazy=True)
         time.sleep(3.1)
-        capture("copy-target-partial-retained" + suffix, expected=say("check for a partial copy", "Možnou neúplnou kopii"))
+        capture("copy-target-partial-retained" + suffix, expected=say("check for a partial copy", "Připojte disk a zkontrolujte soubor."))
         if long_name:
             key("Page_Down")
             capture("copy-target-partial-retained-long-details", expected="v03.bin")
@@ -1018,7 +1020,9 @@ def exercise_additional_storage_states():
         key("Return")
         capture("folder-disappeared", expected=say("Folder replaced by a file", "Složku nahradil soubor"))
         key("Return")
-        capture("folder-replaced-file-opened", expected="A file replaced the folder")
+        preview = capture("folder-replaced-file-opened", expected="A file replaced the folder")
+        assert not any(not obj["hidden"] and say("Folder replaced by a file", "Složku nahradil soubor")
+                       in (obj["text"] or "") for obj in preview["objects"])
         key("Escape")
         attach(copy)
         time.sleep(.9)
@@ -1029,7 +1033,9 @@ def exercise_additional_storage_states():
         time.sleep(.9)
         capture("new-folder-drive-disconnected", expected=say("Couldn’t create folder", "Složku se nepodařilo vytvořit"))
         key("Escape")
-        assert_selected(capture("new-folder-drive-disconnected-return"), say("Home", "Domů"))
+        assert_selected(capture("new-folder-drive-disconnected-return",
+                                expected=say("Drive UX COPY disconnected.", "Disk UX COPY byl odpojen.")),
+                        say("Home", "Domů"))
     finally:
         stop(app)
         if os.path.ismount(copy[0]):
@@ -1189,7 +1195,8 @@ def exercise_package():
         key("x")
         (Path(os.environ["UX2_ROOT"])/"apt-fails").touch()
         key("Return", delay=1.6)
-        capture("deb-apt-unavailable", expected=say("Installation blocked", "Instalace zablokována"))
+        capture("deb-apt-unavailable", expected=(say("Required packages are unavailable.", "Chybí potřebné balíčky."),
+                                                say("Check your package sources.", "Zkontrolujte zdroje balíčků.")))
         key("x")
         capture("deb-apt-unavailable-details", expected=(say("Installation blocked", "Instalace zablokována"),
                                                        "dependency resolution failed"))
@@ -1809,7 +1816,8 @@ def exercise_round5_package_metadata():
         key("Return")
         capture("deb-long-version", expected=("· arm64", say("APT plan verified", "Plán APT ověřen")))
         key("Page_Down")
-        capture("deb-long-version-scrolled", expected=("· arm64", say("APT plan verified", "Plán APT ověřen")))
+        capture("deb-long-version-scrolled", expected=("· arm64", say("Version:", "Verze:"),
+                                                       "1:42.302.503+cardputerzero20261123-123456"))
     finally:
         stop(app)
 
@@ -2021,9 +2029,14 @@ def exercise_round6_volume_edges():
     try:
         key("x")
         key("e")
-        key("Return")
-        capture("places-duplicate-eject-progress", expected="UX EJECT #2")
-        assert_selected(capture("places-duplicate-eject-success", delay=.75, expected="UX EJECT #2"), "UX EJECT")
+        gate = Path(os.environ["UX2_ROOT"]) / "hold-eject"
+        gate.touch()
+        try:
+            key("Return")
+            capture("places-duplicate-eject-progress", expected=(say("Ejecting drive", "Vysouvám disk"), "UX EJECT #2"))
+        finally:
+            gate.unlink()
+        assert_selected(capture("places-duplicate-eject-success", delay=.75, expected="UX EJECT #2"), "UX EJECT #1")
         assert os.path.ismount(primary) and not os.path.ismount(alternate)
     finally:
         stop(app)

@@ -232,34 +232,32 @@ BrowserKeyHints browserKeyHints(bool places, bool eject, bool usb, bool selected
     if (menu) return {keyHints({movementHint, local("Enter Select", "Enter Vybrat"), back, usbHint}, {}), {}};
 
     const auto* compactOpen = selected ? local("↵ Open", "↵ Otevřít") : "";
-    if (!places && eject && !movement) {
-        return {keyHints({compactOpen, ejectHint, tab, back}, {}), {}};
+    if (!places && eject) {
+        auto hints = keyHints({movementHint, compactOpen, ejectHint, tab, back}, {});
+        if (hints.find(back) == std::string::npos) {
+            hints = keyHints({movementHint, selected ? "↵" : "", ejectHint, tab, back}, {});
+        }
+        return {std::move(hints), {}};
+    }
+    if (!places && usb) {
+        const auto hints = keyHints({movementHint, compactOpen, tab, back, usbHint}, {});
+        if (hints.find(usbHint) != std::string::npos) return {hints, {}};
+        return {keyHints({movement ? "F↑X↓" : "", compactOpen, usbHint, "Tab", back}, {}), {}};
     }
 
-    // Tab stays in the same column in Places and in the ordinary file list.
+    // Keep Tab aligned between Places and the ordinary file list.
     const int leadWidth = BrowserKeyHints::leadingWidth;
     auto leading = keyHints({movementHint, open}, {}, leadWidth);
-    if (!places && eject) {
-        leading = keyHints({movementHint, selected ? "↵" : "", ejectHint}, {}, leadWidth);
-        if (leading.find(ejectHint) == std::string::npos) {
-            leading = keyHints({movement ? "F↑X↓" : "", selected ? "↵" : "", ejectHint}, {}, leadWidth);
-        }
-    } else if (!places && usb) {
-        leading = keyHints({movementHint, selected ? "↵" : "", usbHint}, {}, leadWidth);
-        if (leading.find(usbHint) == std::string::npos) {
-            leading = keyHints({movement ? "F↑X↓" : "", usbHint}, {}, leadWidth);
-        }
+    if (selected && leading.find(open) == std::string::npos) {
+        leading = keyHints({movementHint, compactOpen}, {}, leadWidth);
     }
     const auto* placeCommand = !places ? "" : eject ? ejectHint : usbHint;
     auto trailing = keyHints({tab, places ? "" : back}, {placeCommand}, BrowserKeyHints::trailingWidth);
-    const auto fitsFooter = [&] {
-        return textLength(leading) + textLength(trailing) + (leading.empty() ? 0 : 1) <= 44;
-    };
-    if (!fitsFooter()) {
-        leading = keyHints({movement ? "F↑X↓" : "", usbHint}, {}, leadWidth);
-    }
     if (places && usb && !eject && trailing.find(usbHint) == std::string::npos) {
         trailing = keyHints({tab, local("U Drives", "U Disky")}, {}, BrowserKeyHints::trailingWidth);
+    }
+    if (textLength(leading) + textLength(trailing) + (leading.empty() ? 0 : 1) > 44) {
+        leading = keyHints({open}, {}, leadWidth);
     }
     return {std::move(leading), std::move(trailing)};
 }

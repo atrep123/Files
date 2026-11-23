@@ -134,6 +134,32 @@ FileOperationResult transferError(const char* operation, const internal::Filesys
     return errorResult(FileOperationStatus::Failed, std::string(operation) + " failed: " + detail);
 }
 
+bool sameVolume(const internal::RemovableVolume& a, const internal::RemovableVolume& b)
+{
+    return a.mount.id == b.mount.id && a.mount.target == b.mount.target && a.mount.deviceNumber == b.mount.deviceNumber;
+}
+
+void numberDuplicateVolumes(std::vector<internal::RemovableVolume>& volumes,
+                            const std::vector<internal::RemovableVolume>& previous)
+{
+    for (auto& drive : volumes) {
+        const auto old = std::find_if(previous.begin(), previous.end(), [&](const auto& old) {
+            return sameVolume(old, drive) && old.name == drive.name;
+        });
+        drive.displayNumber = old == previous.end() ? 0 : old->displayNumber;
+    }
+    for (auto& drive : volumes) {
+        if (drive.displayNumber) continue;
+        const auto matches = [&](const auto& other) { return other.name == drive.name; };
+        if (std::count_if(volumes.begin(), volumes.end(), matches) <= 1) continue;
+        unsigned number = 1;
+        while (std::any_of(volumes.begin(), volumes.end(), [&](const auto& other) {
+            return matches(other) && other.displayNumber == number;
+        })) ++number;
+        drive.displayNumber = number;
+    }
+}
+
 }  // namespace
 
 FileBrowserModel::FileBrowserModel(std::string start_directory, std::vector<internal::RemovableVolume> volumes)
@@ -141,6 +167,7 @@ FileBrowserModel::FileBrowserModel(std::string start_directory, std::vector<inte
       _volumes(std::move(volumes))
 {
     if (!_volumes.empty()) {
+        numberDuplicateVolumes(_volumes, {});
         showPlaces();
     }
 }
@@ -199,11 +226,11 @@ VolumeChanges FileBrowserModel::updateVolumes(std::vector<internal::RemovableVol
 {
     const auto contains = [](const auto& list, const auto& item) {
         return std::any_of(list.begin(), list.end(), [&item](const auto& other) {
-            return item.mount.id == other.mount.id && item.mount.target == other.mount.target &&
-                   item.mount.deviceNumber == other.mount.deviceNumber;
+            return sameVolume(item, other);
         });
     };
 
+    numberDuplicateVolumes(volumes, _volumes);
     VolumeChanges changes;
     for (const auto& item : volumes) {
         if (!contains(_volumes, item)) {
@@ -275,11 +302,7 @@ FileOperationResult FileBrowserModel::openVolume(uint64_t mountId, bool remember
 std::string FileBrowserModel::volumeDisplayName(uint64_t mountId) const
 {
     const auto* drive = volume(mountId);
-    if (!drive) return {};
-    const auto hasSameName = [drive](const auto& other) { return other.name == drive->name; };
-    if (std::count_if(_volumes.begin(), _volumes.end(), hasSameName) <= 1) return drive->name;
-    const auto index = std::count_if(_volumes.data(), drive, hasSameName);
-    return drive->name + " #" + std::to_string(index + 1);
+    return drive ? drive->displayName() : std::string{};
 }
 
 void FileBrowserModel::refreshPlaces(const std::string& preferredPath)
