@@ -24,7 +24,7 @@ extern "C" int __wrap_fsync(int fd)
     const auto path = fs::read_symlink("/proc/self/fd/" + std::to_string(fd));
     const bool fault = syncFault == "parent" ? path.filename() == "Cíl bez jmenovky"
                      : syncFault == "file" ? fs::is_regular_file(path)
-                     : syncFault == "directory" && path.filename() == "payload";
+                     : syncFault == "directory" && path.filename() == "Jiný svazek";
     if (fault) {
         errno = EIO;
         return -1;
@@ -58,7 +58,7 @@ int main(int argc, char** argv)
             return review.installable ? 1 : 0;
         }
         if (mode == "review") {
-            return review.installable && review.text.find("scripts as root") != std::string::npos &&
+            return review.installable && review.text.find("scripts run as root") != std::string::npos &&
                    review.text.find("Keep local configuration") != std::string::npos &&
                    review.text.find("APT plan") != std::string::npos ? 0 : 1;
         }
@@ -101,8 +101,8 @@ int main(int argc, char** argv)
         entry.name = source.filename().string();
         const auto copied = browser.copyEntryTo(entry, destination.string());
         std::cout << copied.message << '\n';
-        const char* expected = mode == "space" ? "No space left on device"
-                             : mode == "readonly" ? "Read-only file system" : "Permission denied";
+        const char* expected = mode == "space" ? "Disk is full"
+                             : mode == "readonly" ? "Disk is read-only" : "Permission denied";
         return !copied && copied.message.find(expected) != std::string::npos ? 0 : 1;
     }
     if (mode == "sync-file" || mode == "sync-directory" || mode == "sync-parent") {

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -16,7 +17,9 @@
 #include <grp.h>
 #include <pwd.h>
 #include <sys/file.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #endif
 
 namespace files::internal {
@@ -37,9 +40,9 @@ std::string trimWhitespace(const std::string& text)
 }
 
 #if defined(__linux__)
-struct LockFd {
+struct ScopedFd {
     int fd = -1;
-    ~LockFd() { if (fd >= 0) close(fd); }
+    ~ScopedFd() { if (fd >= 0) close(fd); }
 };
 
 struct RootStage {
@@ -54,6 +57,50 @@ struct RootStage {
     }
 };
 
+// This process is a subreaper. Even if Store or the timed command exits early,
+// its remaining installation descendants must finish before we release the locks.
+struct ReapInstallChildren {
+    ~ReapInstallChildren()
+    {
+        while (waitpid(-1, nullptr, 0) >= 0 || errno == EINTR) {
+        }
+    }
+};
+
+void syncRecoveryFd(int fd, const fs::path& path)
+{
+    while (fsync(fd) != 0) {
+        if (errno != EINTR) {
+            throw std::runtime_error("Cannot sync package recovery data at " + path.string() + ": " +
+                                     std::strerror(errno));
+        }
+    }
+}
+
+void syncRecoveryDirectory(const fs::path& path)
+{
+    ScopedFd directory{open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)};
+    if (directory.fd < 0) {
+        throw std::runtime_error("Cannot open the package recovery directory: " + path.string());
+    }
+    syncRecoveryFd(directory.fd, path);
+}
+
+void writeAll(int fd, const char* data, size_t size, const char* error)
+{
+    while (size > 0) {
+        const auto count = write(fd, data, size);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count <= 0) {
+            throw std::runtime_error(error + std::string(": ") + std::strerror(count < 0 ? errno : EIO));
+        }
+        data += count;
+        size -= static_cast<size_t>(count);
+    }
+}
+
 bool storeHelperPresent()
 {
     std::error_code error;
@@ -67,7 +114,7 @@ bool storeHelperPresent()
     return true;
 }
 
-void lockTransaction(LockFd& lock)
+void lockTransaction(ScopedFd& lock)
 {
     if (lock.fd < 0) {
         throw std::runtime_error("Cannot open the package transaction lock: " + std::string(std::strerror(errno)));
@@ -80,7 +127,7 @@ void lockTransaction(LockFd& lock)
     }
 }
 
-void openStoreLock(LockFd& lock, const std::string& configured)
+void openStoreLock(ScopedFd& lock, const std::string& configured)
 {
     const char* sudoUid = std::getenv("SUDO_UID");
     if (!sudoUid || !*sudoUid || std::strspn(sudoUid, "0123456789") != std::strlen(sudoUid)) {
@@ -184,15 +231,27 @@ fs::path writePendingRecord(const fs::path& path, const std::string& name, const
     }
     const auto stage = path.parent_path();
     const auto pending = stage / "pending-package.json";
-    std::ofstream record(pending);
-    record << "{\"transaction_id\":\"files-local\",\"action\":\"install\","
-           << "\"app_id\":\"" << name << "\",\"package\":\"" << name << "\","
-           << "\"expected_package_version\":\"" << version << "\",\"expected_md5\":\"" << checksum << "\","
-           << "\"expected_sha256\":\"" << sha256 << "\",\"deb_path\":\"" << path.string() << "\"}\n";
-    record.close();
-    if (!record || chmod(pending.c_str(), 0600) != 0) {
-        throw std::runtime_error("Cannot write the package recovery record.");
+    const auto temporary = stage / "pending-package.json.tmp";
+    ScopedFd record{open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600)};
+    if (record.fd < 0) {
+        throw std::runtime_error("Cannot create the package recovery record.");
     }
+    std::ostringstream json;
+    json << "{\"transaction_id\":\"files-local\",\"action\":\"install\","
+         << "\"app_id\":\"" << name << "\",\"package\":\"" << name << "\","
+         << "\"expected_package_version\":\"" << version << "\",\"expected_md5\":\"" << checksum << "\","
+         << "\"expected_sha256\":\"" << sha256 << "\",\"deb_path\":\"" << path.string() << "\"}\n";
+    const auto text = json.str();
+    writeAll(record.fd, text.data(), text.size(), "Cannot write the package recovery record");
+    syncRecoveryFd(record.fd, temporary);
+    const int fd = record.fd;
+    record.fd = -1;
+    if (close(fd) != 0) {
+        throw std::runtime_error("Cannot finish writing the package recovery record.");
+    }
+    fs::rename(temporary, pending);
+    syncRecoveryDirectory(stage);
+    syncRecoveryDirectory(stage.parent_path());
     return pending;
 }
 
@@ -238,7 +297,14 @@ exec /usr/bin/dpkg --force-confdef --force-confold --install "$FILES_REVIEWED_AR
     }
     fs::create_hard_link(dpkg, tools / "apt-get");
 
-    if (setenv("M5APPSTORE_STATE_DIR", stage.c_str(), 1) != 0 ||
+    // Store updates its own pending file. Keep the durable Files record intact for recovery.
+    const auto storeState = stage / "store";
+    if (mkdir(storeState.c_str(), 0700) != 0) {
+        throw std::runtime_error("Cannot prepare the private Store transaction directory.");
+    }
+    const auto storePending = storeState / pending.filename();
+    fs::copy_file(pending, storePending);
+    if (setenv("M5APPSTORE_STATE_DIR", storeState.c_str(), 1) != 0 ||
         setenv("FILES_REVIEWED_USE_APT", apt ? "yes" : "no", 1) != 0 ||
         setenv("FILES_REVIEWED_APT_HOOK", aptHook.c_str(), 1) != 0 ||
         setenv("PATH", (tools.string() + ":/usr/sbin:/usr/bin:/sbin:/bin").c_str(), 1) != 0) {
@@ -246,7 +312,7 @@ exec /usr/bin/dpkg --force-confdef --force-confold --install "$FILES_REVIEWED_AR
     }
     const auto result = runCommand({storeHelperExecutable, "--package-helper", "install",
                                     "--package-value", path.string(), "--package-transaction", "files-local",
-                                    "--package-pending-path", pending.string()},
+                                    "--package-pending-path", storePending.string()},
                                    [](const std::string& output) { std::cout << output << std::flush; });
     setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
     return result ? std::string{} : "Store's package helper failed (exit " + std::to_string(result.exitCode) + ").";
@@ -265,7 +331,7 @@ void copyReviewedArchive(const fs::path& path)
     if (fd < 0) {
         throw std::runtime_error("Cannot create the protected package copy.");
     }
-    LockFd output{fd};
+    ScopedFd output{fd};
     char buffer[128 * 1024];
     off_t remaining = input.st_size;
     while (remaining > 0) {
@@ -277,18 +343,10 @@ void copyReviewedArchive(const fs::path& path)
         if (count <= 0) {
             throw std::runtime_error("The prepared package changed after review or could not be read.");
         }
-        for (ssize_t written = 0; written < count;) {
-            const auto part = write(fd, buffer + written, static_cast<size_t>(count - written));
-            if (part < 0 && errno == EINTR) {
-                continue;
-            }
-            if (part <= 0) {
-                throw std::runtime_error("Cannot write the protected package copy: " + std::string(std::strerror(errno)));
-            }
-            written += part;
-        }
+        writeAll(fd, buffer, static_cast<size_t>(count), "Cannot write the protected package copy");
         remaining -= count;
     }
+    syncRecoveryFd(fd, path);
     output.fd = -1;
     if (close(fd) != 0) {
         throw std::runtime_error("Cannot finish writing the protected package copy.");
@@ -414,29 +472,13 @@ bool trustedSystemExecutable(const fs::path& path)
 #endif
 }
 
-int runDebInstallHelper(int argc, char** argv)
-{
 #if defined(__linux__)
-    if (geteuid() != 0 || argc != 7 || !digestValid(argv[2], 64) || !digestValid(argv[3], 64)) {
-        std::cerr << "Invalid privileged package request.\n";
-        return 1;
-    }
-    LockFd globalLock, storeLock;
+namespace {
+
+int installTransaction(char** argv, bool store)
+{
     RootStage stage;
     try {
-        umask(022);
-        if (setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1) != 0 ||
-            setenv("DEBIAN_FRONTEND", "noninteractive", 1) != 0) {
-            throw std::runtime_error("Cannot set the package manager environment.");
-        }
-        unsetenv("APT_CONFIG");
-        globalLock.fd = open("/run/cardputer-files-package.lock", O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
-        lockTransaction(globalLock);
-        const bool store = storeHelperPresent();
-        if (store) {
-            openStoreLock(storeLock, argv[6]);
-        }
-
         std::cout << "Verifying the reviewed archive...\n" << std::flush;
         std::string temporary = "/var/tmp/cardputer-files-install-XXXXXX";
         if (!mkdtemp(temporary.data())) {
@@ -480,28 +522,31 @@ int runDebInstallHelper(int argc, char** argv)
         const auto pending = writePendingRecord(package, name, version, argv[2]);
         stage.preserveForRecovery = true;
         std::cout << "Installing " << name << "...\n" << std::flush;
-        if (store) {
-            std::cout << "Using the Store package transaction helper.\n" << std::flush;
-            const auto error = storeInstall(package, pending, apt, aptHook);
-            if (!error.empty()) {
-                throw std::runtime_error(error);
-            }
-        } else {
-            const std::vector<std::string> dpkg{"/usr/bin/dpkg", "--force-confdef", "--force-confold",
-                                                "--install", package.string()};
-            auto command = apt ? debAptCommand(package, false) : dpkg;
-            if (apt) {
-                command.insert(command.end() - 2, {"-o", "DPkg::Pre-Install-Pkgs::=" + aptHook.string()});
-            }
-            const auto timeout = packageTimeout();
-            const auto result = runTimedCommand(command, timeout,
-                                                [](const std::string& output) { std::cout << output << std::flush; });
-            if (result.timedOut) {
-                throw std::runtime_error("Package installation exceeded the time limit of " +
-                                         std::to_string(timeout.count()) + " s. The package manager was stopped.");
-            }
-            if (!result) {
-                throw std::runtime_error("Package manager failed (exit " + std::to_string(result.exitCode) + ").");
+        {
+            const ReapInstallChildren descendants;
+            if (store) {
+                std::cout << "Using the Store package transaction helper.\n" << std::flush;
+                const auto error = storeInstall(package, pending, apt, aptHook);
+                if (!error.empty()) {
+                    throw std::runtime_error(error);
+                }
+            } else {
+                const std::vector<std::string> dpkg{"/usr/bin/dpkg", "--force-confdef", "--force-confold",
+                                                    "--install", package.string()};
+                auto command = apt ? debAptCommand(package, false) : dpkg;
+                if (apt) {
+                    command.insert(command.end() - 2, {"-o", "DPkg::Pre-Install-Pkgs::=" + aptHook.string()});
+                }
+                const auto timeout = packageTimeout();
+                const auto result = runTimedCommand(command, timeout,
+                                                    [](const std::string& output) { std::cout << output << std::flush; });
+                if (result.timedOut) {
+                    throw std::runtime_error("Package installation exceeded the time limit of " +
+                                             std::to_string(timeout.count()) + " s. The package manager was stopped.");
+                }
+                if (!result) {
+                    throw std::runtime_error("Package manager failed (exit " + std::to_string(result.exitCode) + ").");
+                }
             }
         }
         const auto arch = packageField(package, "Architecture");
@@ -518,6 +563,61 @@ int runDebInstallHelper(int argc, char** argv)
             std::cerr << "\nRecovery files kept in " << stage.directory.string()
                       << ". Review pending-package.json and remove this directory after resolving package state.\n";
         }
+        return 1;
+    }
+}
+}  // namespace
+#endif
+
+int runDebInstallHelper(int argc, char** argv)
+{
+#if defined(__linux__)
+    if (geteuid() != 0 || argc != 7 || !digestValid(argv[2], 64) || !digestValid(argv[3], 64)) {
+        std::cerr << "Invalid privileged package request.\n";
+        return 1;
+    }
+    ScopedFd globalLock, storeLock;
+    try {
+        umask(022);
+        if (setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1) != 0 ||
+            setenv("DEBIAN_FRONTEND", "noninteractive", 1) != 0) {
+            throw std::runtime_error("Cannot set the package manager environment.");
+        }
+        unsetenv("APT_CONFIG");
+        globalLock.fd = open("/run/cardputer-files-package.lock", O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+        lockTransaction(globalLock);
+        const bool store = storeHelperPresent();
+        if (store) {
+            openStoreLock(storeLock, argv[6]);
+        }
+
+        // fork shares the locked file descriptions. The worker keeps them without
+        // passing either descriptor through exec to package tools or maintainer scripts.
+        const auto worker = fork();
+        if (worker < 0) {
+            throw std::runtime_error("Cannot start the package transaction worker.");
+        }
+        if (worker == 0) {
+            // sudo can signal its direct child or the old process group when the UI dies.
+            // Progress writes to a closed UI pipe must not terminate this worker.
+            if (setsid() < 0 || prctl(PR_SET_CHILD_SUBREAPER, 1L, 0L, 0L, 0L) < 0 ||
+                std::signal(SIGCHLD, SIG_DFL) == SIG_ERR || std::signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+                std::cerr << "Cannot isolate the package transaction worker.\n";
+                _exit(1);
+            }
+            const int result = installTransaction(argv, store);
+            std::cerr.flush();
+            std::cout.flush();
+            _exit(result);
+        }
+        int status = 0;
+        pid_t waited;
+        do {
+            waited = waitpid(worker, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+        return waited == worker && WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << "\n\n" << debAuditMessage() << '\n';
         return 1;
     }
 #else

@@ -101,6 +101,8 @@ for version in 1 2; do
     mkdir -p "$tmp/pkg/DEBIAN" "$tmp/pkg/usr/share/doc/cz-zkouska-files"
     printf 'Package: cz-zkouska-files\nArchitecture: all\nVersion: 1.0.0\nMaintainer: Test <test@example.invalid>\nDescription: Fixture %s\n' "$version" >"$tmp/pkg/DEBIAN/control"
     printf '%s\n' "$version" >"$tmp/pkg/usr/share/doc/cz-zkouska-files/payload"
+    printf '#!/bin/sh\nexit 0\n' >"$tmp/pkg/DEBIAN/postinst"
+    chmod 0755 "$tmp/pkg/DEBIAN/postinst"
     dpkg-deb --build --root-owner-group "$tmp/pkg" "$tmp/balíček $version.deb"
 done
 deb="$tmp/balíček 1.deb"
@@ -146,6 +148,7 @@ case "${1:-}" in
         [ "$(stat -c '%u:%a' "$(dirname "$4")")" = 0:711 ]
         if runuser -u nobody -- test -w "$4"; then exit 25; fi
         printf 'dpkg %s\n' "$*" >>"$TEST_LOG"
+        if [ -n "${TEST_SYNC_TRACE:-}" ]; then printf 'manager\n' >>"$TEST_SYNC_TRACE"; fi
         touch "$TEST_DIR/running"
         if [ -n "${TEST_TIMEOUT:-}" ]; then
             touch "$TEST_DIR/broken"
@@ -153,6 +156,14 @@ case "${1:-}" in
             echo "$!" >"$TEST_DIR/manager-child"
             exec >&- 2>&-
             wait
+        fi
+        if [ -n "${TEST_HOLD:-}" ]; then
+            echo "$$" >"$TEST_DIR/held-manager"
+            for attempt in $(seq 1 200); do
+                if [ -e "$TEST_DIR/release-manager" ]; then break; fi
+                sleep 0.05
+            done
+            [ -e "$TEST_DIR/release-manager" ]
         fi
         sleep 1
         if [ -n "${TEST_FAIL:-}" ]; then touch "$TEST_DIR/broken"; echo "fixture postinst failed"; exit 42; fi
@@ -194,24 +205,7 @@ for tool in sudo dpkg dpkg-query apt-get; do
     record_mount "/usr/bin/$tool" --bind "$tmp/$tool"
 done
 
-"$probe" changed "$deb" "$tmp/balíček 2.deb"
-[[ ! -e $TEST_LOG ]]
-echo "PASS archive replacement rejected before dpkg"
-
-"$probe" install "$deb" >"$tmp/first.log" &
-first=$!
-for ((try=0; try<400; ++try)); do
-    [[ ! -e $tmp/running ]] || break
-    sleep 0.02
-done
-[[ -e $tmp/running ]]
-if "$probe" install "$deb" >"$tmp/second.log"; then exit 27; fi
-wait "$first"
-cat "$tmp/first.log" "$tmp/second.log"
-grep -F 'Another Files or Store package transaction is running' "$tmp/second.log"
-[[ $(grep -c '^dpkg ' "$TEST_LOG") == 1 ]]
-echo "PASS overlapping Files transactions"
-
+install_fake_store() {
 cat >"$appdir/bin/M5CardputerZero-AppStore" <<'FAKE'
 #!/bin/sh
 set -eu
@@ -222,9 +216,41 @@ set -eu
 grep -F "\"deb_path\":\"$4\"" "$8"
 grep -F 'expected_md5' "$8"
 printf 'Store helper invoked\n' >>"$TEST_LOG"
+if [ -n "${TEST_ORPHAN:-}" ]; then
+    dpkg --install "$4" &
+    for attempt in $(seq 1 200); do
+        if [ -s "$TEST_DIR/held-manager" ]; then
+            touch "$TEST_DIR/store-exiting"
+            exit 40
+        fi
+        sleep 0.05
+    done
+    exit 41
+fi
 exec dpkg --install "$4"
 FAKE
 chmod 0755 "$appdir/bin/M5CardputerZero-AppStore"
+}
+"$probe" changed "$deb" "$tmp/balíček 2.deb"
+[[ ! -e $TEST_LOG ]]
+echo "PASS archive replacement rejected before dpkg"
+
+TEST_HOLD=1 "$probe" install "$deb" >"$tmp/first.log" &
+first=$!
+for ((try=0; try<400; ++try)); do
+    [[ ! -s $tmp/held-manager ]] || break
+    sleep 0.02
+done
+[[ -s $tmp/held-manager ]]
+if "$probe" install "$deb" >"$tmp/second.log"; then exit 27; fi
+touch "$tmp/release-manager"
+wait "$first"
+cat "$tmp/first.log" "$tmp/second.log"
+grep -F 'Another Files or Store package transaction is running' "$tmp/second.log"
+[[ $(grep -c '^dpkg ' "$TEST_LOG") == 1 ]]
+echo "PASS overlapping Files transactions"
+
+install_fake_store
 exec 8>"$M5APPSTORE_STATE_DIR/package-transaction.lock"
 flock -n 8
 if "$probe" install "$deb" >"$tmp/busy-store.log"; then exit 28; fi
@@ -272,3 +298,109 @@ shopt -s nullglob
 stages=(/var/tmp/cardputer-files-install-*)
 [[ ${#stages[@]} -eq 2 ]]
 echo "PASS successful install cleaned its own stage and kept both earlier recovery records"
+
+# Exercise the privileged entry point directly so the test can kill its exact PID.
+plan=$(apt-get --simulate -y --reinstall --no-remove --no-install-recommends install "$deb" |
+    sed -n '/^\(Inst\|Conf\|Remv\|Purg\) /p' | sha256sum | cut -d ' ' -f 1)
+archive=$(sha256sum "$deb" | cut -d ' ' -f 1)
+helper=("$appdir/bin/M5CardputerZero-Files" --files-install-reviewed-deb "$archive" "$plan"
+        cz-zkouska-files 1.0.0 "$M5APPSTORE_STATE_DIR")
+export SUDO_UID=0
+wait_for_manager() {
+    for ((try=0; try<400; ++try)); do
+        [[ ! -s $tmp/held-manager ]] || return 0
+        sleep 0.02
+    done
+    return 1
+}
+
+if [[ ${FILES_DEB_REGRESSION:-all} != d2 ]]; then
+    failures=0
+    for variant in direct store orphan; do
+        rm -f -- "$tmp/held-manager" "$tmp/release-manager"
+        unset TEST_ORPHAN
+        if [[ $variant == direct ]]; then
+            rm -f -- "$appdir/bin/M5CardputerZero-AppStore"
+        else
+            install_fake_store
+            if [[ $variant == orphan ]]; then export TEST_ORPHAN=1; fi
+        fi
+        TEST_HOLD=1 "${helper[@]}" <"$deb" >"$tmp/held.log" 2>&1 &
+        owner=$!
+        wait_for_manager || { cat "$tmp/held.log"; exit 1; }
+        manager=$(cat "$tmp/held-manager")
+        if [[ $variant != orphan ]]; then
+            kill -KILL "$owner"
+            wait "$owner" 2>/dev/null || :
+        else
+            # The mock reports its exit before we challenge the locks.
+            for ((try=0; try<100; ++try)); do
+                [[ ! -e $tmp/store-exiting ]] || break
+                sleep 0.02
+            done
+            (( try < 100 ))
+            sleep 0.3
+        fi
+        kill -0 "$manager"
+        failure=0
+        if [[ $variant != direct ]] && flock -n "$M5APPSTORE_STATE_DIR/package-transaction.lock" true; then
+            echo "FAIL D1 ($variant): Store acquired its lock while manager $manager was alive"
+            failure=1
+        fi
+        if "${helper[@]}" <"$deb" >"$tmp/peer.log" 2>&1; then
+            echo "FAIL D1 ($variant): second Files install started while manager $manager was alive"
+            failure=1
+        elif ! grep -F 'Another Files or Store package transaction is running' "$tmp/peer.log"; then
+            cat "$tmp/peer.log"
+            failure=1
+        fi
+        touch "$tmp/release-manager"
+        for ((try=0; try<400; ++try)); do
+            if flock -n /run/cardputer-files-package.lock true &&
+                flock -n "$M5APPSTORE_STATE_DIR/package-transaction.lock" true &&
+                { [[ ! -r /proc/$manager/stat ]] || grep -q ') Z ' "/proc/$manager/stat"; }; then break; fi
+            sleep 0.02
+        done
+        (( try < 400 ))
+        if [[ $variant == orphan ]]; then wait "$owner" && exit 1; fi
+        if (( failure == 0 )); then
+            echo "PASS D1 ($variant): peers excluded until the orphan transaction ended"
+        else
+            failures=$((failures + 1))
+        fi
+    done
+    (( failures == 0 ))
+fi
+
+if [[ ${FILES_DEB_REGRESSION:-all} != d1 ]]; then
+    unset TEST_ORPHAN
+    cc -shared -fPIC -o "$tmp/deb-sync.so" "$(dirname "$(realpath "$0")")/deb_sync_fault.c" -ldl
+    export TEST_SYNC_TRACE="$tmp/deb-sync.log"
+    failures=0
+    for variant in direct store; do
+        if [[ $variant == direct ]]; then
+            rm -f -- "$appdir/bin/M5CardputerZero-AppStore"
+        else
+            install_fake_store
+        fi
+        : >"$TEST_SYNC_TRACE"
+        LD_PRELOAD="$tmp/deb-sync.so" "${helper[@]}" <"$deb" >"$tmp/sync.log" 2>&1
+        printf '%s\n' archive record stage parent manager >"$tmp/expected-sync"
+        if ! diff -u "$tmp/expected-sync" "$TEST_SYNC_TRACE"; then
+            echo "FAIL D2 ($variant): package manager ran without all four successful barriers"
+            failures=$((failures + 1))
+            continue
+        fi
+        for point in archive record stage parent; do
+            : >"$TEST_SYNC_TRACE"
+            if TEST_SYNC_FAIL=$point LD_PRELOAD="$tmp/deb-sync.so" "${helper[@]}" <"$deb" >"$tmp/sync.log" 2>&1; then
+                echo "FAIL D2 ($variant): install succeeded with failed $point fsync"
+                exit 1
+            fi
+            grep -Fx "failed $point" "$TEST_SYNC_TRACE"
+            if grep -Fx manager "$TEST_SYNC_TRACE"; then exit 1; fi
+        done
+        echo "PASS D2 ($variant): archive, record, stage and parent synced before launch; all four EIOs blocked it"
+    done
+    (( failures == 0 ))
+fi
