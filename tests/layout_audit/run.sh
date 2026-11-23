@@ -83,12 +83,40 @@ chmod 0755 /usr/bin/apt-get
 mv /usr/bin/sudo /usr/bin/sudo.files-audit-original
 cat >/usr/bin/sudo <<'EOF'
 #!/bin/sh
+if [ -e "$UX2_ROOT/install-phases" ]; then
+    phase() {
+        if [ "$#" -eq 3 ]; then
+            printf '%b' "$2"
+            sleep 0.15
+            printf '%b\n' "$3"
+        else
+            printf '%b\n' "$2"
+        fi
+        : > "$UX2_ROOT/install-phase-$1"
+        for attempt in $(seq 1 200); do
+            [ -e "$UX2_ROOT/install-next-$1" ] && return
+            [ -e "$UX2_ROOT/install-phases" ] || exit 2
+            sleep 0.05
+        done
+        exit 2
+    }
+    phase verify 'Verifying the reviewed archive...'
+    phase prepare 'Preparing the package transaction...'
+    phase download 'dlstatus:0:12.5:Fetching packages'
+    phase install 'PROGRESS\tpackage-manager\t0\t0\t-1\tInstalling package'
+    phase unpack 'PROGRESS\tpackage-manager\t0\t0\t40\tUnpack' \
+        'ing arbitrary-package (1.0)\nPROGRESS\tpackage-manager\t0\t0\t-1\tStill installing package'
+    phase configure 'pmstatus:arbitrary-package:arm64:75.0:Configuring arbitrary-package'
+    phase finish 'Verifying the installed package...\nUnexpected diagnostic from the helper'
+    exit 2
+fi
 if [ -e "$UX2_ROOT/install-fails" ]; then
     sleep 0.55
     printf '%s\n' 'No space left on device.' '' 'dpkg: could not finish unpacking the package.' '' 'dpkg --audit: no unfinished packages.' >&2
     exit 2
 fi
 if [ -e "$UX2_ROOT/reject-password" ] && [ "$1" = -S ]; then
+    sleep 0.60
     echo 'Sorry, incorrect password' >&2
     exit 1
 fi

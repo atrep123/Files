@@ -1148,26 +1148,36 @@ void BrowserViewModel::startPackageRead(const FileEntry& entry)
     });
 }
 
+const char* BrowserViewModel::packageInstallStatus() const
+{
+    using Phase = internal::DebInstallPhase;
+    switch (_package_phase.load()) {
+        case Phase::Authorizing: return local("Checking authorization…", "Ověřuji oprávnění…");
+        case Phase::Verifying: return local("Verifying the archive…", "Ověřuji archiv…");
+        case Phase::Downloading: return local("Downloading dependencies…", "Stahuji závislosti…");
+        case Phase::Installing: return local("Starting the package manager…", "Spouštím správce balíčků…");
+        case Phase::Unpacking: return local("Unpacking the package…", "Rozbaluji balíček…");
+        case Phase::Configuring: return local("Configuring the package…", "Nastavuji balíček…");
+        case Phase::Finishing: return local("Finishing installation…", "Dokončuji instalaci…");
+        case Phase::Preparing: return local("Preparing installation…", "Připravuji instalaci…");
+    }
+    return "";
+}
+
 void BrowserViewModel::startPackageInstall()
 {
     if (!_prepared_deb) {
         return;
     }
-    _package_log = local("Preparing installation…\n", "Připravuji instalaci…\n");
+    _package_phase.store(internal::DebInstallPhase::Preparing);
     std::string password;
     password.swap(_package_password);
     _package_dialog.set({PackageDialogMode::Installing, local("Installing package", "Instaluji balíček"),
-                         _package_log, false, DialogTone::Normal, _prepared_deb->metadata.name});
+                         packageInstallStatus(), false, DialogTone::Normal, _prepared_deb->metadata.name});
     _package_install = std::async(std::launch::async, [this, password = std::move(password)]() mutable {
-        return internal::installDeb(*_prepared_deb, password, [this](const std::string& chunk) {
-            std::lock_guard<std::mutex> lock(_package_log_mutex);
-            _package_log += internal::cleanCommandText(chunk);
-            constexpr size_t maxLog = 8192;
-            if (_package_log.size() > maxLog) {
-                const auto start = _package_log.find('\n', _package_log.size() - maxLog);
-                _package_log.erase(0, start == std::string::npos ? _package_log.size() - maxLog : start + 1);
-            }
-        });
+        return internal::installDeb(*_prepared_deb, password,
+            [](const std::string& chunk) { spdlog::debug("Debian installer: {}", internal::cleanCommandText(chunk)); },
+            [this](internal::DebInstallPhase phase) { _package_phase.store(phase); });
     });
 }
 
@@ -1298,6 +1308,7 @@ void BrowserViewModel::tickPackage(uint32_t nowMs)
                         "Couldn’t verify your account.\nAll 3 attempts have been used.",
                         "Účet se nepodařilo ověřit.\nVšechny 3 pokusy jsou vyčerpány.") :
                                                                   localizedMessage(result.message));
+                std::string diagnostic;
                 if (result.message == "The Files installer helper is missing.") {
                     message = local("The Files installer helper is missing.\nAsk an administrator to fix this.",
                                     "Chybí instalační nástroj\naplikace Soubory.\nPožádejte správce o opravu.");
@@ -1307,41 +1318,35 @@ void BrowserViewModel::tickPackage(uint32_t nowMs)
                 } else if (result.message == "The prepared package changed after review or cannot be opened. Open it again.") {
                     message = local("The package changed or is unavailable.\nReopen the original .deb file.",
                                     "Balíček se změnil nebo není dostupný.\nZnovu otevřete původní soubor .deb.");
-                } else if (!installed && result.state != State::AuthenticationFailed) {
-                    const auto details = message.find('\n');
-                    if (result.message.rfind("Package installation failed", 0) == 0) {
-                        const auto reason = details == std::string::npos ? std::string::npos :
-                            message.find_first_not_of("\r\n ", details);
-                        message = reason == std::string::npos ? "" : message.substr(reason);
-                        if (message.empty() || message.rfind("dpkg --audit", 0) == 0) {
-                            message.insert(0, local("The package manager gave no reason.\n",
-                                                    "Správce balíčků neuvedl důvod.\n"));
+                } else if (result.message.rfind("Package installation failed\n\n", 0) == 0 ||
+                           result.message.rfind("Sudo authorization failed\n\n", 0) == 0) {
+                    const auto first = result.message.find("\n\n") + 2;
+                    diagnostic = result.message.substr(first);
+                    if (diagnostic.rfind("No space left on device.", 0) == 0) {
+                        message = local("Not enough disk space.", "Na disku není dost místa.");
+                        if (diagnostic.find("dpkg: could not finish unpacking the package.") != std::string::npos &&
+                            diagnostic.find("dpkg --audit: no unfinished packages.") != std::string::npos) {
+                            message += local("\ndpkg couldn’t unpack the package.\nNo unfinished packages.",
+                                             "\ndpkg nemohl rozbalit balíček.\nŽádné nedokončené balíčky.");
                         }
-                    }
-                    for (size_t blank = message.find("\n\n"); blank != std::string::npos;
-                         blank = message.find("\n\n", blank)) message.erase(blank, 1);
-                    const auto audit = message.find("dpkg --audit: no unfinished packages.");
-                    if (message.rfind("No space left on device.", 0) == 0) {
-                        constexpr std::string_view unpack = "dpkg: could not finish unpacking the package.";
-                        const auto knownUnpack = message.find(unpack) != std::string::npos;
-                        if (knownUnpack && audit != std::string::npos) {
-                            message = std::string(local("Not enough disk space.\ndpkg couldn’t unpack the package.\n"
-                                "No unfinished packages.\nFree disk space, then try again.",
-                                "Na disku není dost místa.\ndpkg nemohl rozbalit balíček.\n"
-                                "Žádné nedokončené balíčky.\nUvolněte místo a zkuste to znovu.")) +
-                                local("\nDetails\n", "\nPodrobnosti\n") + message;
-                        } else {
-                            message.replace(0, std::string_view("No space left on device.").size(),
-                                            local("Not enough disk space.", "Na disku není dost místa."));
-                        }
+                        message += local("\nFree disk space, then try again.",
+                                         "\nUvolněte místo a zkuste to znovu.");
+                    } else if (result.message.rfind("Sudo authorization failed", 0) == 0) {
+                        message = local("Could not verify system permissions.", "Systémová oprávnění nelze ověřit.");
+                    } else if (diagnostic.empty() || diagnostic.rfind("dpkg --audit", 0) == 0) {
+                        message = local("The package manager gave no reason.", "Správce balíčků neuvedl důvod.");
+                    } else {
+                        message = local("Check the details below.", "Projděte podrobnosti níže.");
                     }
                 }
                 PackageDialog resultDialog{PackageDialogMode::Result,
                                      installed ? local("Installation complete", "Instalace dokončena") :
                                                  local("Installation failed", "Instalace selhala"),
                                      message, false, installed ? DialogTone::Success : DialogTone::Error, identity};
-                if (message.find(local("\nDetails\n", "\nPodrobnosti\n")) != std::string::npos) {
-                    resultDialog.diagnosticLabel = local("dpkg log", "Výpis dpkg");
+                if (!diagnostic.empty()) {
+                    resultDialog.diagnosticHeading = local("Details", "Podrobnosti");
+                    resultDialog.diagnosticLabel = local("Package log", "Výpis instalace");
+                    resultDialog.diagnosticText = std::move(diagnostic);
                 }
                 _package_dialog.set(std::move(resultDialog));
             }
@@ -1357,14 +1362,11 @@ void BrowserViewModel::tickPackage(uint32_t nowMs)
         nowMs - _last_package_update >= 125) {
         _last_package_update = nowMs;
         auto dialog = _package_dialog.get();
-        {
-            std::lock_guard<std::mutex> lock(_package_log_mutex);
-            if (dialog.text == _package_log) {
-                return;
-            }
-            dialog.text = _package_log;
+        const auto* status = packageInstallStatus();
+        if (dialog.text != status) {
+            dialog.text = status;
+            _package_dialog.set(std::move(dialog));
         }
-        _package_dialog.set(std::move(dialog));
     }
 }
 

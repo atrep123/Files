@@ -1105,6 +1105,46 @@ def exercise_transfer_unplug_variants():
                     detach(path)
 
 
+def exercise_install_phases():
+    sample = base / "install-phases"
+    sample.mkdir()
+    deb(sample / "plain.deb", False)
+    outer = Path(os.environ["UX2_ROOT"])
+    fixture = outer / "install-phases"
+    title = say("Installing package", "Instaluji balíček")
+    app = launch("install-phases", sample)
+    try:
+        key("Return")
+        capture("wait-install-phase-review", expected=say("Enter Install", "Enter Instalovat"), keep=False)
+        fixture.touch()
+        key("Return")
+        phases = [
+            ("verify", say("Verifying the archive…", "Ověřuji archiv…")),
+            ("prepare", say("Preparing installation…", "Připravuji instalaci…")),
+            ("download", say("Downloading dependencies…", "Stahuji závislosti…")),
+            ("install", say("Starting the package manager…", "Spouštím správce balíčků…")),
+            ("unpack", say("Unpacking the package…", "Rozbaluji balíček…")),
+            ("configure", say("Configuring the package…", "Nastavuji balíček…")),
+            ("finish", say("Finishing installation…", "Dokončuji instalaci…")),
+        ]
+        for phase, status in phases:
+            wait_for(lambda: (outer / f"install-phase-{phase}").exists())
+            frame = capture(f"install-phase-{phase}", delay=.25, expected=title)
+            texts = [obj["text"] for obj in frame["objects"] if not obj["hidden"] and obj["text"]]
+            assert status in texts, (phase, status, texts)
+            assert not any("PROGRESS" in text or "arbitrary-package" in text or
+                           "Unexpected diagnostic" in text for text in texts), (phase, texts)
+            (outer / f"install-next-{phase}").touch()
+        capture("install-phase-failure", expected=say("Installation failed", "Instalace selhala"))
+    finally:
+        fixture.unlink(missing_ok=True)
+        for flag in outer.glob("install-phase-*"):
+            flag.unlink()
+        for flag in outer.glob("install-next-*"):
+            flag.unlink()
+        stop(app)
+
+
 def exercise_package():
     sample = base/"package"
     sample.mkdir()
@@ -1155,7 +1195,8 @@ def exercise_package():
         capture("install-password-reopened", expected=say("Enter your account password", "Zadejte heslo svého účtu"))
         type_ascii("fixture")
         (Path(os.environ["UX2_ROOT"])/"reject-password").touch()
-        key("Return", delay=.53)
+        key("Return", delay=.02)
+        capture("install-phase-authorize", expected=say("Checking authorization…", "Ověřuji oprávnění…"))
         capture("install-password-retry", expected=say("Incorrect password", "Nesprávné heslo"))
         key("a")
         capture("install-password-retry-one", expected="*")
@@ -2150,6 +2191,7 @@ for language in os.environ.get("FILES_AUDIT_LANGUAGES", "cs,en").split(","):
         "startup-usb": exercise_startup_with_usb, "usb-interruptions": exercise_usb_interruptions, "copy": exercise_copy, "copy-source": lambda: exercise_copy_disconnect(True),
         "copy-target": lambda: exercise_copy_disconnect(False),
         "move": lambda: exercise_copy_disconnect(False, move=True), "package": exercise_package,
+        "install-phases": exercise_install_phases,
         "previews": exercise_previews, "audio-boundaries": exercise_audio_boundaries,
         "folder-removed": exercise_folder_removed, "errors": exercise_filesystem_errors,
         "editor-boundaries": exercise_editor_boundaries,

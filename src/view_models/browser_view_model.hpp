@@ -4,6 +4,7 @@
 #include "models/debian_package.hpp"
 #include "view_models/view_model.hpp"
 #include <tools/observable/single_observable.hpp>
+#include <atomic>
 #include <deque>
 #include <future>
 #include <mutex>
@@ -202,8 +203,8 @@ private:
     std::string _package_password;
     int _password_attempts = 0;
     uint64_t _package_source_mount_id = 0;
-    std::mutex _package_log_mutex;
-    std::string _package_log;
+    std::atomic<internal::DebInstallPhase> _package_phase{internal::DebInstallPhase::Preparing};
+    const char* packageInstallStatus() const;
     // The workers finish before the state they use is destroyed.
     std::future<internal::DebInspection> _package_read;
     std::future<internal::DebInstallResult> _package_install;

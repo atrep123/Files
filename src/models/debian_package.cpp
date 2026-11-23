@@ -315,7 +315,8 @@ DebInspection inspectDeb(const fs::path& source, uint64_t mountId, const Command
 #endif
 }
 
-DebInstallResult installDeb(const PreparedDeb& package, std::string& password, const CommandOutput& progress)
+DebInstallResult installDeb(const PreparedDeb& package, std::string& password, const CommandOutput& log,
+                           const DebInstallProgress& progress)
 {
     struct ClearPassword {
         std::string& password;
@@ -334,15 +335,11 @@ DebInstallResult installDeb(const PreparedDeb& package, std::string& password, c
         return {DebInstallState::Failed, missing ? "The Files installer helper is missing." :
                                                   "The installer helper path has unsafe permissions."};
     }
-    const auto update = [&](const auto& message) {
-        if (progress) {
-            progress(message);
-        }
-    };
     const bool suppliedPassword = !password.empty();
     if (suppliedPassword) {
         password += '\n';
-        update("Checking sudo authorization...\n");
+        if (progress) progress(DebInstallPhase::Authorizing);
+        if (log) log("Checking sudo authorization...\n");
         const auto auth = runCommand({"/usr/bin/sudo", "-S", "-p", "", "-v"}, {}, password);
         if (!auth) {
             const bool retry = auth.exitCode == 1 && (auth.output.find("password") != std::string::npos ||
@@ -372,7 +369,28 @@ DebInstallResult installDeb(const PreparedDeb& package, std::string& password, c
     const std::vector<std::string> elevated{"/usr/bin/sudo", "-n", "--", debHelperExecutable, debHelperOption,
                                             package.sha256, package.aptPlanSha256, metadata.name, metadata.version,
                                             storeState};
-    const auto result = runCommand(elevated, progress, {}, true, input.fd);
+    // A pipe read may contain a partial line or several APT/dpkg/Store updates.
+    constexpr size_t maxProgressLine = 8192;
+    std::string pendingLine;
+    bool discardLine = false;
+    const auto onOutput = [&](const std::string& chunk) {
+        if (log) log(chunk);
+        if (!progress) return;
+        for (const char c : chunk) {
+            if (c == '\n' || c == '\r') {
+                if (!discardLine && !pendingLine.empty()) {
+                    if (const auto phase = debInstallPhase(pendingLine)) progress(*phase);
+                }
+                pendingLine.clear();
+                discardLine = false;
+            } else if (pendingLine.size() < maxProgressLine) {
+                pendingLine.push_back(c);
+            } else {
+                discardLine = true;
+            }
+        }
+    };
+    const auto result = runCommand(elevated, onOutput, {}, true, input.fd);
     if (!result) {
         const std::string output = trim(result.output);
         const std::string passwordRequired = "sudo: a password is required";
@@ -389,6 +407,7 @@ DebInstallResult installDeb(const PreparedDeb& package, std::string& password, c
     return {DebInstallState::Installed, "Installed " + metadata.name + " " + metadata.version};
 #else
     (void)package;
+    (void)log;
     (void)progress;
     return {DebInstallState::Failed, "Debian packages require a Debian-compatible Linux system"};
 #endif

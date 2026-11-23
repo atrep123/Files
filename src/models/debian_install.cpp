@@ -26,6 +26,10 @@ namespace files::internal {
 namespace fs = std::filesystem;
 namespace {
 
+constexpr char verifyingArchive[] = "Verifying the reviewed archive...";
+constexpr char preparingTransaction[] = "Preparing the package transaction...";
+constexpr char verifyingInstall[] = "Verifying the installed package...";
+
 constexpr char storeHelperExecutable[] = "/usr/share/APPLaunch/bin/M5CardputerZero-AppStore";
 
 bool digestValid(const std::string& digest, size_t size)
@@ -383,6 +387,53 @@ bool needsApt(const std::string& plan, const std::string& name)
 
 }  // namespace
 
+std::optional<DebInstallPhase> debInstallPhase(std::string_view line)
+{
+    using Phase = DebInstallPhase;
+    if (line == verifyingArchive) return Phase::Verifying;
+    if (line == preparingTransaction) return Phase::Preparing;
+    if (line == verifyingInstall) return Phase::Finishing;
+
+    const auto takeField = [](std::string_view& text, char delimiter) {
+        const auto end = text.find(delimiter);
+        const auto value = text.substr(0, end);
+        text.remove_prefix(end == std::string_view::npos ? text.size() : end + 1);
+        return value;
+    };
+    if (line.rfind("PROGRESS\t", 0) == 0) {
+        // Store emits phase, byte counters, percentage, then the package manager's message.
+        line.remove_prefix(sizeof("PROGRESS\t") - 1);
+        const auto phase = takeField(line, '\t');
+        if (phase == "verify") return Phase::Verifying;
+        if (phase == "dependencies") {
+            return line.find("\tDownloading dependencies") != std::string_view::npos ?
+                Phase::Downloading : Phase::Preparing;
+        }
+        if (phase != "package-manager") return std::nullopt;
+        takeField(line, '\t');
+        takeField(line, '\t');
+        takeField(line, '\t');
+    } else if (line.rfind("pmstatus:", 0) == 0) {
+        line.remove_prefix(sizeof("pmstatus:") - 1);
+        takeField(line, ':');
+        const auto field = takeField(line, ':');
+        // APT can qualify the package name with its architecture.
+        if (field.find_first_not_of("0123456789.,") != std::string_view::npos) takeField(line, ':');
+    } else if (line.rfind("dlstatus:", 0) == 0 || line.rfind("Get:", 0) == 0) {
+        return Phase::Downloading;
+    }
+
+    if (line.rfind("Preparing to configure ", 0) == 0 || line.rfind("Configuring ", 0) == 0 ||
+        line.rfind("Setting up ", 0) == 0 || line.rfind("Running post-installation ", 0) == 0) {
+        return Phase::Configuring;
+    }
+    if (line.rfind("Preparing to unpack ", 0) == 0 || line.rfind("Preparing ", 0) == 0) return Phase::Preparing;
+    if (line.rfind("Unpacking ", 0) == 0) return Phase::Unpacking;
+    if (line.rfind("Processing triggers ", 0) == 0) return Phase::Finishing;
+    if (line.rfind("Installing ", 0) == 0) return Phase::Installing;
+    return std::nullopt;
+}
+
 std::string debStagingError(const fs::path& directory, std::uintmax_t bytes)
 {
     // Keep the sealed review snapshot bounded on devices with 512 MiB of RAM.
@@ -479,7 +530,7 @@ int installTransaction(char** argv, bool store)
 {
     RootStage stage;
     try {
-        std::cout << "Verifying the reviewed archive...\n" << std::flush;
+        std::cout << verifyingArchive << std::endl;
         std::string temporary = "/var/tmp/cardputer-files-install-XXXXXX";
         if (!mkdtemp(temporary.data())) {
             throw std::runtime_error("Cannot create protected package storage.");
@@ -498,6 +549,7 @@ int installTransaction(char** argv, bool store)
             !validField(version, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+.:~-")) {
             throw std::runtime_error("The protected archive does not match the reviewed package metadata.");
         }
+        std::cout << preparingTransaction << std::endl;
         const auto audit = runCommand({"/usr/bin/dpkg", "--audit"});
         if (!audit || !trimWhitespace(audit.output).empty()) {
             throw std::runtime_error("Resolve unfinished package operations before installing.");
@@ -549,6 +601,7 @@ int installTransaction(char** argv, bool store)
                 }
             }
         }
+        std::cout << verifyingInstall << std::endl;
         const auto arch = packageField(package, "Architecture");
         const auto installed = runCommand({"/usr/bin/dpkg-query", "-W", "-f=${Status}\\n${Version}", "--",
                                            arch == "all" ? name : name + ":" + arch});

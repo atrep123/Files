@@ -561,11 +561,6 @@ public:
         lv_obj_set_height(_body, installing ? lineHeight : height);
         auto body = dialog.text;
         if (const auto first = body.find_first_not_of("\n"); first != std::string::npos) body.erase(0, first);
-        if (installing) {
-            while (!body.empty() && body.back() == '\n') body.pop_back();
-            if (const auto last = body.rfind('\n'); last != std::string::npos) body.erase(0, last + 1);
-            body = fitText(std::move(body), 282, uiFont14());
-        }
         const std::string marker = std::string(local("Details", "Podrobnosti")) + "\n";
         auto diagnostics = dialog.diagnosticText;
         if (diagnostics.empty() && dialog.tone == DialogTone::Error) {

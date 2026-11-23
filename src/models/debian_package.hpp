@@ -38,6 +38,9 @@ struct DebInspection {
     std::string nativeArchitecture;
 };
 
+enum class DebInstallPhase { Preparing, Authorizing, Verifying, Downloading, Installing, Unpacking, Configuring, Finishing };
+using DebInstallProgress = std::function<void(DebInstallPhase)>;
+
 enum class DebInstallState { Installed, PasswordRequired, AuthenticationFailed, Failed };
 
 struct DebInstallResult {
@@ -48,7 +51,8 @@ struct DebInstallResult {
 DebMetadata parseDebInfo(const std::string& output);
 DebInspection inspectDeb(const std::filesystem::path& source, uint64_t mountId = 0,
                          const CommandOutput& metadataReady = {});
-DebInstallResult installDeb(const PreparedDeb& package, std::string& password, const CommandOutput& progress);
+DebInstallResult installDeb(const PreparedDeb& package, std::string& password, const CommandOutput& log,
+                            const DebInstallProgress& progress = {});
 std::string cleanCommandText(std::string text);
 
 }  // namespace files::internal
