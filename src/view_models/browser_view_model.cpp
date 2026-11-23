@@ -900,11 +900,13 @@ void BrowserViewModel::startEject()
 {
     _eject_progress = std::string(local("Unmounting ", "Odpojuji ")) + _eject_name + "…";
     _package_dialog.set({PackageDialogMode::Ejecting, local("Ejecting drive", "Vysouvám disk"), _eject_progress});
-    _storage_operation = std::async(std::launch::async, [this, mountId = _eject_mount_id] {
+    const auto* drive = _model.browser().volume(_eject_mount_id);
+    const auto displayNumber = drive ? drive->displayNumber : 0;
+    _storage_operation = std::async(std::launch::async, [this, mountId = _eject_mount_id, displayNumber] {
         return FileTransferResult{FileBrowserModel::ejectDrive(mountId, [this](const std::string& message) {
             std::lock_guard<std::mutex> lock(_eject_mutex);
             _eject_progress = message;
-        })};
+        }, displayNumber)};
     });
 }
 

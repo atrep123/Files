@@ -186,35 +186,36 @@ FileOperationResult ejectVolume(const RemovableVolume& volume, const CommandOutp
         }) != 1) {
         return {FileOperationStatus::Failed, "Drive has multiple mount points"};
     }
+    const auto displayName = volume.displayName();
     if (progress) {
-        progress("Unmounting " + volume.name + "…");
+        progress("Unmounting " + displayName + "…");
     }
     const auto unmount = runUdisks("unmount", volume.mount.source);
     if (!unmount || volumePresent(volume.mount.id)) {
         if (unmount.output.find("DeviceBusy") != std::string::npos ||
             unmount.output.find("target is busy") != std::string::npos) {
-            return {FileOperationStatus::Failed, volume.name + " is in use.\nClose files on " + volume.name + ", then press E to eject again."};
+            return {FileOperationStatus::Failed, displayName + " is in use.\nClose files on " + displayName + ", then press E to eject again."};
         }
-        return ejectError("Could not unmount " + volume.name, unmount);
+        return ejectError("Could not unmount " + displayName, unmount);
     }
     if (!volume.powerOff) {
-        return {FileOperationStatus::Ok, "You can unplug " + volume.name + " now."};
+        return {FileOperationStatus::Ok, "You can unplug " + displayName + " now."};
     }
 
     for (const auto& mount : currentMounts()) {
         const auto block = blockPath("/sys", mount);
         if (!block.empty() && (fs::path("/dev") / diskPath(block).filename()) == volume.disk) {
-            return {FileOperationStatus::Failed, "Other volumes on " + volume.name + " are still mounted."};
+            return {FileOperationStatus::Failed, "Other volumes on " + displayName + " are still mounted."};
         }
     }
     if (progress) {
-        progress("Powering off " + volume.name + "…");
+        progress("Powering off " + displayName + "…");
     }
     const auto power = runUdisks("power-off", volume.disk);
     if (!power) {
-        return ejectError("Unmounted. Could not power off " + volume.name, power);
+        return ejectError("Unmounted. Could not power off " + displayName, power);
     }
-    return {FileOperationStatus::Ok, "You can unplug " + volume.name + " now."};
+    return {FileOperationStatus::Ok, "You can unplug " + displayName + " now."};
 }
 
 }  // namespace files::internal

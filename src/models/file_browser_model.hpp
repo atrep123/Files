@@ -65,7 +65,8 @@ public:
     std::string volumeDisplayName(uint64_t mountId) const;
     const internal::RemovableVolume* volume(uint64_t mountId) const;
     FileOperationResult ejectSelected();
-    static FileOperationResult ejectDrive(uint64_t mountId, const internal::CommandOutput& progress = {});
+    static FileOperationResult ejectDrive(uint64_t mountId, const internal::CommandOutput& progress = {},
+                                           unsigned displayNumber = 0);
     uint64_t currentMountId() const { return _current_mount_id; }
     FileOperationResult refreshSelecting(const std::string& preferredPath);
     static FileTransferResult performTransfer(const FileEntry& entry, const std::string& destinationDirectory,

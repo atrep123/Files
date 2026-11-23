@@ -350,16 +350,19 @@ FileOperationResult FileBrowserModel::ejectSelected()
     if (!entry || !entry->mountRoot) {
         return errorResult(FileOperationStatus::InvalidSelection, "Select a removable drive");
     }
-    const auto result = ejectDrive(entry->mountId);
+    const auto* drive = volume(entry->mountId);
+    const auto result = drive ? ejectDrive(entry->mountId, {}, drive->displayNumber) : disconnected();
     updateVolumes(internal::removableVolumes());
     refresh(true);
     return result;
 }
 
-FileOperationResult FileBrowserModel::ejectDrive(uint64_t mountId, const internal::CommandOutput& progress)
+FileOperationResult FileBrowserModel::ejectDrive(uint64_t mountId, const internal::CommandOutput& progress,
+                                                 unsigned displayNumber)
 {
-    for (const auto& volume : internal::removableVolumes()) {
+    for (auto& volume : internal::removableVolumes()) {
         if (volume.mount.id == mountId) {
+            volume.displayNumber = displayNumber;
             return internal::ejectVolume(volume, progress);
         }
     }
