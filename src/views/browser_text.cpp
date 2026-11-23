@@ -4,6 +4,7 @@
 #include "core/files_language.hpp"
 #include "src/misc/lv_text_private.h"
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <vector>
 
@@ -64,6 +65,18 @@ std::string fitText(std::string text, int width, const lv_font_t* font, size_t l
         const auto candidate = static_cast<size_t>(boundary - ends.begin());
         if (candidate > 1 && fits(build(1, candidate), width, limit, font)) right = candidate;
     }
+    if (preserveExtension && right < ends.size() - 1) {
+        // Keep the final version token and, when space permits, its preceding word.
+        auto boundary = text.rfind(' ', ends[right]);
+        if (boundary != std::string::npos && boundary + 2 < ends[right] &&
+            text[boundary + 1] == 'v' && std::isdigit(static_cast<unsigned char>(text[boundary + 2]))) {
+            const auto prior = boundary > 0 ? text.rfind(' ', boundary - 1) : std::string::npos;
+            if (prior != std::string::npos) {
+                const auto word = static_cast<size_t>(std::lower_bound(ends.begin(), ends.end(), prior + 1) - ends.begin());
+                if (fits(build(1, word), width, limit, font)) right = word;
+            }
+        }
+    }
     const int leftBudget = std::max(0, (width - textWidth(build(0, right), font)) * 2 / 3);
     // Reserve suffix room in both pixels and characters, for example in a 36-character toast.
     const auto leftLimit = limit == std::string::npos ? limit : std::max<size_t>(1, (limit - 1) * 2 / 3);
@@ -77,7 +90,7 @@ std::string fitText(std::string text, int width, const lv_font_t* font, size_t l
             left = static_cast<size_t>(std::lower_bound(ends.begin(), ends.end(), space) - ends.begin());
         }
     }
-    if (preserveExtension && text[ends[right]] != ' ' && text[ends[right] - 1] != ' ') {
+    if (preserveExtension && right < ends.size() - 1 && text[ends[right]] != ' ' && text[ends[right] - 1] != ' ') {
         const auto space = text.find(' ', ends[right]);
         if (space != std::string::npos && space - ends[right] <= 5) {
             right = static_cast<size_t>(std::lower_bound(ends.begin(), ends.end(), space + 1) - ends.begin());
@@ -96,6 +109,21 @@ std::string fitText(std::string text, int width, const lv_font_t* font, size_t l
     return build(left, right);
 }
 
+std::string fitPackageVersion(std::string_view metadata, int width)
+{
+    const auto* font = uiFont12();
+    if (textWidth(metadata, font) <= width) return std::string(metadata);
+    const auto arch = metadata.rfind(" · ");
+    const auto revision = arch == std::string_view::npos ? std::string_view::npos : metadata.rfind('-', arch);
+    if (revision != std::string_view::npos) {
+        const auto tail = "…" + std::string(metadata.substr(revision));
+        auto prefix = std::string(metadata.substr(0, revision));
+        while (!prefix.empty() && textWidth(prefix + tail, font) > width) prefix.pop_back();
+        if (!prefix.empty()) return prefix + tail;
+    }
+    return fitText(std::string(metadata), width, font);
+}
+
 std::string fitPath(std::string_view path, int width, const lv_font_t* font)
 {
     const auto leaf = path.rfind('/');
@@ -105,6 +133,13 @@ std::string fitPath(std::string_view path, int width, const lv_font_t* font)
     const bool deep = parent != std::string_view::npos && parent > 0 &&
                       path.find('/', 1) < parent && measured > width * 3 / 4;
     if (!deep && measured <= width) return std::string(path);
+    if (path.front() == '/' && parent != std::string_view::npos) {
+        const auto first = path.find('/', 1);
+        if (first < parent) {
+            const auto compact = std::string(path.substr(0, first + 1)) + "…" + std::string(path.substr(parent));
+            if (textWidth(compact, font) <= width) return compact;
+        }
+    }
     for (auto slash : {parent, leaf}) {
         if (slash == std::string_view::npos) continue;
         const auto tail = "…" + std::string(path.substr(slash));
@@ -159,24 +194,30 @@ std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, boo
     const auto* actions = local("Tab Menu", "Tab Nabídka");
     const auto* ejectHint = eject ? local("E Eject", "E Vysunout") : "";
     const auto* movement = canMove ? "F↑ X↓" : "";
-    const auto* usbHint = usb ? "U USB" : "";
+    const auto* usbHint = !usb ? "" : multipleUsb ? local("U Choose drive", "U Vybrat disk") :
+                                                    local("U Open drive", "U Otevřít disk");
     if (menu) {
-        const auto* usbAction = !usb ? "" : multipleUsb ? local("U Choose drive", "U Vybrat disk") :
-                                                         local("U Open drive", "U Otevřít disk");
-        if (!usb) return keyHints({movement, local("Enter Select", "Enter Vybrat"), back}, {});
-        return keyHints({movement, "Enter ↵", back, usbAction}, {});
+        return keyHints({movement, local("Enter Select", "Enter Vybrat"), back, usbHint}, {});
     }
     if (places) {
-        if (eject) {
-            return keyHints({movement, open, ejectHint, actions}, {});
-        }
-        return keyHints({movement, selected ? open : "", actions}, {usbHint});
+        const auto* menuHint = local("Tab Menu", "Tab Nabídka");
+        const int width = 304 - textWidth(menuHint, uiFont12()) - 10;
+        auto keys = keyHints({movement, selected ? open : "", ejectHint}, {usbHint}, width);
+        if ((eject && keys.find(ejectHint) == std::string::npos) ||
+            textLength(keys) + textLength(menuHint) + textLength(keyGap) > 44)
+            keys = keyHints({movement, selected ? "Enter ↵" : "", ejectHint}, {}, width);
+        return keys;
     }
     if (eject) {
         const auto* driveMovement = canMove ? "F↑X↓" : "";
-        auto keys = keyHints({driveMovement, selected ? open : "", ejectHint, actions, back}, {});
-        if (keys.find(back) == std::string::npos)
+        // The compact USB footer keeps both actions and uses full verbs.
+        const auto* compactBack = local("Esc Back", "Esc");
+        auto keys = keyHints({driveMovement, selected ? open : "", ejectHint, actions, compactBack}, {});
+        if (keys.find(compactBack) == std::string::npos && canMove && selected) {
+            keys = keyHints({movement, open, actions, back}, {});
+        } else if (keys.find(compactBack) == std::string::npos) {
             keys = keyHints({driveMovement, selected ? "Enter ↵" : "", ejectHint, actions, back}, {});
+        }
         return keys;
     }
     auto keys = keyHints({movement, selected ? open : "", actions, back}, {usbHint});

@@ -78,7 +78,7 @@ void requireBrowserText()
         lv_point_t size{};
         lv_text_get_size(&size, hint.c_str(), files::uiFont12(), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
         check(size.x <= 304 && files::textLength(hint) <= 44, hint.c_str());
-        check(usb || hint.find("U USB") == std::string::npos, "U USB needs a connected drive");
+        check(usb || hint.find("U ") == std::string::npos, "USB shortcut needs a connected drive");
         if ((state & 16) != 0) check(hint.find("F↑") == 0, "movement must be the first shortcut");
     }
     const auto drive = files::browserKeyHint(true, true, true, true, true, false);

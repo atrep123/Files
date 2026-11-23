@@ -168,6 +168,14 @@ std::optional<std::string> readTextContent(const FileEntry& file, int& error, bo
     ::close(fd);
     content.resize(offset);
     limited = file_size > kMaxPreviewBytes;
+    if (limited && !content.empty()) {
+        // The byte limit can land inside the final UTF-8 codepoint.
+        auto lead = content.size() - 1;
+        while (lead && (static_cast<unsigned char>(content[lead]) & 0xc0) == 0x80) --lead;
+        const auto ch = static_cast<unsigned char>(content[lead]);
+        const size_t bytes = ch < 0x80 ? 1 : ch < 0xe0 ? 2 : ch < 0xf0 ? 3 : 4;
+        if (content.size() - lead < bytes) content.resize(lead);
+    }
     return content;
 #else
     std::ifstream stream(file.path, std::ios::binary);
@@ -191,7 +199,7 @@ std::optional<std::string> readTextContent(const FileEntry& file, int& error, bo
 
 class TextPreviewPage : public PreviewPage {
 public:
-    TextPreviewPage(std::string title, std::string content) : _title(std::move(title)), _content(std::move(content))
+    TextPreviewPage(std::string title, std::string content) : _title(std::move(title)), _content(std::move(content)), _recolor(true)
     {
     }
 
@@ -210,7 +218,7 @@ public:
             } else if (error == ENOENT) {
                 _read_reason = local("The file is no longer available.", "Soubor už není dostupný.");
             } else {
-                _read_reason = local("The file could not be read.", "Soubor se nepodařilo přečíst.");
+                _read_reason.clear();
             }
         }
     }
@@ -236,6 +244,7 @@ public:
 #ifdef FILES_LAYOUT_AUDIT
         layout_audit::markMonoSeparator(header);
 #endif
+        lv_obj_set_y(lv_obj_get_child(header, 0), 0);
         if (_limited) {
             const auto* notice = local("First 64 KiB", "Prvních 64 KiB");
             const int width = textWidth(notice, uiFont12());
@@ -328,6 +337,7 @@ private:
     std::string _read_reason;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _root;
     lv_obj_t* _keys = nullptr;
+    bool _recolor = false;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _panel;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Label> _label;
     std::unique_ptr<smooth_ui_toolkit::lvgl_cpp::Container> _scrollbar_track;
@@ -361,7 +371,10 @@ private:
         const auto display = !_content.empty() && _content.front() == '/' &&
             _content.find_first_of(" \t\r\n") == std::string::npos
             ? wrapPath(_content, 296, uiFont14()) : _content;
-        _label->setText(_read_failed ? local("Read failed", "Čtení se nezdařilo") : display.c_str());
+        _label->setText(_read_failed ?
+            (_read_reason.empty() ? local("The file could not be read", "Soubor se nepodařilo přečíst") :
+                                   local("Read failed", "Čtení se nezdařilo")) : display.c_str());
+        lv_label_set_recolor(_label->raw_ptr(), _recolor);
         _label->setTextFont(uiFont14());
         lv_obj_set_style_text_line_space(_label->raw_ptr(), kScrollStep - lv_font_get_line_height(uiFont14()), 0);
         _label->setTextColor(lv_color_hex(_read_failed ? kMutedTextColor : kTextColor));
@@ -369,9 +382,10 @@ private:
         _label->setSize(kScreenWidth - kTextPaddingX * 2 - 8, LV_SIZE_CONTENT);
         _label->setPos(0, 0);
         if (_read_failed) {
-            _label->setPos(14, 0);
+            _label->setPos(14, 2);
             _label->setSize(282, LV_SIZE_CONTENT);
-            ui::errorCross(_panel->raw_ptr(), 0, 4);
+            ui::errorCross(_panel->raw_ptr(), 0, 6);
+            if (_read_reason.empty()) return;
             auto* reason = ui::label(_panel->raw_ptr(), 0, kScrollStep + 3, 296, uiFont14());
             lv_label_set_text(reason, _read_reason.c_str());
         }
@@ -383,6 +397,9 @@ private:
         _scrollbar_track->setSize(kScrollbarW, kScrollbarH);
         _scrollbar_track->setPos(kScrollbarX, kScrollbarY);
         _scrollbar_track->setBgColor(lv_color_hex(kScrollbarTrackColor));
+#ifdef FILES_LAYOUT_AUDIT
+        lv_obj_set_user_data(_scrollbar_track->raw_ptr(), &layout_audit::mono_track);
+#endif
         ui::box(_scrollbar_track->raw_ptr(), 0, 0, 3, 1, ui::secondary);
         ui::box(_scrollbar_track->raw_ptr(), 0, kScrollbarH - 1, 3, 1, ui::secondary);
         _scrollbar_track->setBgOpa(LV_OPA_COVER);

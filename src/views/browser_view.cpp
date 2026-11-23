@@ -9,6 +9,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <filesystem>
 
@@ -81,6 +82,19 @@ uint32_t toneColor(DialogTone tone)
     }
 }
 
+lv_obj_t* inputChevron(lv_obj_t* parent, int x, bool right)
+{
+    static constexpr lv_point_precise_t left[] = {{4, 1}, {1, 4}, {4, 7}};
+    static constexpr lv_point_precise_t forward[] = {{1, 1}, {4, 4}, {1, 7}};
+    auto* arrow = lv_line_create(parent);
+    lv_obj_set_pos(arrow, x, 7);
+    lv_obj_set_size(arrow, 7, 9);
+    lv_line_set_points(arrow, right ? forward : left, 3);
+    lv_obj_set_style_line_width(arrow, 2, 0);
+    lv_obj_set_style_line_color(arrow, lv_color_hex(ui::secondary), 0);
+    return arrow;
+}
+
 const char* toneSymbol(DialogTone tone)
 {
     switch (tone) {
@@ -97,8 +111,8 @@ class BrowserView::Rows {
 public:
     Rows(lv_obj_t* parent, uint32_t background)
         : _background(background), _panel(ui::box(parent, 0, 20, 320, 130, background)),
-          _track(ui::box(_panel, 315, 0, 3, 130, background == ui::dialog ? ui::dialogTrack : ui::track)),
-          _thumb(ui::box(_panel, 315, 0, 3, 12, ui::secondary)),
+          _track(ui::scrollTrack(_panel, 315, 0, 3, 130, background == ui::dialog ? ui::dialogTrack : ui::track)),
+          _thumb(ui::box(_panel, 315, 0, 3, 12, background == ui::dialog ? 0xDEDFDE : ui::secondary)),
           _empty(ui::label(_panel, 8, 54, 304, uiFont14())),
           _pasteHint(ui::label(_panel, 8, 74, 304, uiFont12(), ui::secondary))
     {
@@ -143,6 +157,11 @@ public:
     }
 
     void show(bool visible) { ui::hidden(_panel, !visible); }
+    void showScrollbar(bool visible)
+    {
+        _showScrollbar = visible;
+        select(_selected);
+    }
     void showPasteHint(bool visible, bool moving)
     {
         ui::hidden(_pasteHint, !visible);
@@ -194,8 +213,8 @@ public:
         _first = first;
         ui::hidden(_empty, count != 0);
         if (!count) lv_label_set_text(_empty, local("Empty folder", "Prázdná složka"));
-        ui::hidden(_track, count <= _capacity);
-        ui::hidden(_thumb, count <= _capacity);
+        ui::hidden(_track, !_showScrollbar || count <= _capacity);
+        ui::hidden(_thumb, !_showScrollbar || count <= _capacity);
         const int track = _capacity * rowHeight;
         const int offset = _reservedY == 20 ? 130 - _reservedHeight - track : 0;
         if (count > _capacity) {
@@ -203,7 +222,7 @@ public:
             lv_obj_set_y(_track, offset);
             lv_obj_set_height(_track, track);
             lv_obj_set_height(_thumb, height);
-            lv_obj_set_y(_thumb, offset + (track - height) * _first / (count - _capacity));
+            lv_obj_set_y(_thumb, offset + ui::scrollbarOffset(track - height, _first, count - _capacity));
         }
         for (int i = 0; i < visibleRows; ++i) {
             auto& row = _rows[i];
@@ -272,15 +291,19 @@ private:
     void bind(const Row& row, const RowData& data)
     {
         const int column = metadataWidth;
-        const int used = data.metadata.empty() ? (data.checked ? 24 : 0) : 8 + column;
+        // The column stays right aligned. File names may use the unused space
+        // before short byte counts, with the same eight-pixel gap.
+        const int used = data.metadata.empty() ? (data.checked ? 24 : 0) :
+            8 + std::min(column, textWidth(data.metadata, uiFont12()));
         const int width = 276 - used;
         ui::hidden(row.check, !data.checked);
         lv_obj_set_width(row.name, width);
         ui::line(row.name, data.name, width, uiFont14(), std::string::npos, !data.directory);
         if (!data.metadata.empty()) {
-            lv_obj_set_x(row.metadata, 308 - column);
-            lv_obj_set_width(row.metadata, column);
-            ui::line(row.metadata, data.metadata, column, uiFont12());
+            const int metadataBox = used - 8;
+            lv_obj_set_x(row.metadata, 308 - metadataBox);
+            lv_obj_set_width(row.metadata, metadataBox);
+            ui::line(row.metadata, data.metadata, metadataBox, uiFont12());
         }
         ui::hidden(row.metadata, data.metadata.empty());
         ui::hidden(row.icon, !data.icon);
@@ -314,6 +337,7 @@ private:
     std::vector<RowData> _actions;
     bool _places = false;
     bool _showEjectContext = false;
+    bool _showScrollbar = true;
     bool _hasPasteHint = false;
     int _first = 0;
     int _selected = -1;
@@ -341,8 +365,8 @@ public:
           _body(ui::box(_box, 8, 30, 288, 98, ui::dialog)),
           _text(ui::label(_body, 0, 0, 282, uiFont14())),
           _diagnostics(ui::label(_body, 0, 0, 282, uiMonoFont12(), ui::secondary)),
-          _scrollTrack(ui::box(_box, 294, 0, 2, 12, ui::dialogTrack)),
-          _thumb(ui::box(_box, 293, 0, 3, 12, ui::secondary)),
+          _scrollTrack(ui::scrollTrack(_box, 294, 0, 2, 12, ui::dialogTrack)),
+          _thumb(ui::box(_box, 293, 0, 3, 12, ui::white)),
           _passwordLine(ui::box(_box, 8, 84, 288, 1, ui::secondary)),
           _passwordCursor(ui::box(_box, 8, 70, 2, 13, ui::white)),
           _masked(ui::label(_box, 8, 67, 288, uiFont14())),
@@ -355,8 +379,8 @@ public:
           _inputFrame(ui::box(_box, 8, 54, 288, 24, ui::black)),
           _input(lv_textarea_create(_inputFrame)),
           _inputText(ui::label(_inputFrame, 11, 2, 268, uiFont14())),
-          _inputLeft(ui::label(_inputFrame, 1, 3, 10, uiFont12(), ui::secondary)),
-          _inputRight(ui::label(_inputFrame, 277, 3, 10, uiFont12(), ui::secondary)),
+          _inputLeft(inputChevron(_inputFrame, 3, false)),
+          _inputRight(inputChevron(_inputFrame, 278, true)),
           _inputCursor(ui::box(_inputFrame, 8, 5, 2, 13, ui::accent))
     {
 #ifdef FILES_LAYOUT_AUDIT
@@ -391,8 +415,6 @@ public:
         lv_obj_set_style_text_opa(_input, LV_OPA_TRANSP, LV_PART_CURSOR);
         lv_obj_set_scrollbar_mode(_input, LV_SCROLLBAR_MODE_OFF);
         lv_label_set_long_mode(_inputText, LV_LABEL_LONG_MODE_CLIP);
-        lv_label_set_text(_inputLeft, "‹");
-        lv_label_set_text(_inputRight, "›");
         lv_obj_add_event_cb(_input, [](lv_event_t* event) {
             if (auto* animation = static_cast<lv_anim_t*>(lv_event_get_param(event))) {
                 lv_anim_set_duration(animation, 1);
@@ -428,8 +450,8 @@ public:
         PackageDialog dialog = package;
         if (deletion.active) {
             dialog = {PackageDialogMode::Result,
-                      deletion.file.directory ? local("Delete folder?", "Smazat složku?") :
-                                                local("Delete file?", "Smazat soubor?"),
+                      deletion.file.directory ? local("Permanently delete folder?", "Trvale smazat složku?") :
+                                                local("Permanently delete file?", "Trvale smazat soubor?"),
                       deletion.file.name + (deletion.file.directory ?
                           (deletion.emptyFolder ? local("\nThis folder is empty.", "\nSložka je prázdná.") :
                               local("\nAll contents will also be deleted.", "\nSložka bude smazána včetně obsahu.")) : ""),
@@ -445,12 +467,13 @@ public:
         _last_title = dialog.title;
 
         const bool packageTitle = dialog.title == local("Debian package", "Balíček Debian");
-        const bool symbol = !packageTitle && dialog.tone != DialogTone::Normal;
+        const bool password = _mode == PackageDialogMode::Password;
+        const bool symbol = !password && !packageTitle && dialog.tone != DialogTone::Normal;
         ui::hidden(_symbol, !symbol);
         lv_obj_set_style_text_font(_symbol, dialog.tone == DialogTone::Warning ? uiFont14() : LV_FONT_DEFAULT, 0);
         lv_label_set_text(_symbol, toneSymbol(dialog.tone));
         for (auto* label : {_symbol, _title}) lv_obj_set_style_text_color(label, lv_color_hex(toneColor(dialog.tone)), 0);
-        if (packageTitle) lv_obj_set_style_text_color(_title, lv_color_hex(ui::white), 0);
+        if (packageTitle || password) lv_obj_set_style_text_color(_title, lv_color_hex(ui::white), 0);
         lv_obj_set_x(_title, symbol ? 28 : 8);
         lv_obj_set_width(_title, symbol ? 268 : 288);
         ui::line(_title, dialog.title, symbol ? 268 : 288, uiFont14());
@@ -459,11 +482,14 @@ public:
         ui::hidden(_meta, dialog.metadata.empty());
         ui::hidden(_warning, !dialog.rootScripts);
         ui::hidden(_warningSymbol, !dialog.rootScripts);
+        _identityText = dialog.identity;
+        lv_obj_set_width(_identity, 288);
         ui::line(_identity, dialog.identity, 288, uiFont14(), std::string::npos, true);
-        const int statusWidth = dialog.metadataStatus.empty() ? 0 : textWidth(dialog.metadataStatus, uiFont12());
+        lv_obj_set_y(_metaStatus, 48);
+        const int statusWidth = dialog.metadataStatus.empty() ? 0 : textWidth(dialog.metadataStatus, uiFont12()) + 1;
         const int metadataWidth = 288 - (statusWidth ? statusWidth + 8 : 0);
         lv_obj_set_width(_meta, metadataWidth);
-        ui::line(_meta, dialog.metadata, metadataWidth, uiFont12());
+        ui::line(_meta, fitPackageVersion(dialog.metadata, metadataWidth), metadataWidth, uiFont12());
         ui::hidden(_metaStatus, !statusWidth);
         if (statusWidth) {
             lv_obj_set_x(_metaStatus, 296 - statusWidth);
@@ -471,7 +497,6 @@ public:
             ui::line(_metaStatus, dialog.metadataStatus, statusWidth, uiFont12());
         }
         lv_label_set_text(_warning, local("Install scripts will run as root", "Při instalaci poběží skripty jako root"));
-        const bool password = _mode == PackageDialogMode::Password;
         const bool installing = _mode == PackageDialogMode::Installing;
         const int fixedY = dialog.rootScripts ? 82 : !dialog.metadata.empty() ? 66 : 50;
         ui::hidden(_fixed, dialog.fixedStatus.empty());
@@ -486,7 +511,7 @@ public:
         lv_obj_set_x(_fixed, 8 + fixedInset);
         lv_obj_set_width(_fixed, 288 - fixedInset);
         ui::line(_fixed, dialog.fixedStatus, 288 - fixedInset, uiFont14());
-        const auto& instruction = dialog.diagnosticLabel.empty() ? dialog.fixedInstruction : dialog.diagnosticLabel;
+        const auto& instruction = dialog.fixedInstruction;
         ui::hidden(_instruction, instruction.empty());
         lv_obj_set_y(_instruction, fixedY + 19);
         ui::line(_instruction, instruction, 288, uiFont14());
@@ -501,8 +526,9 @@ public:
         lv_obj_set_y(_progressTrack, installing ? 80 : 72);
         if (dialog.progress) {
             lv_obj_set_x(_progressFill, 0);
-            lv_obj_set_width(_progressFill, (286 * *dialog.progress + 50) / 100);
-            ui::hidden(_progressFill, *dialog.progress == 0);
+            const int fill = static_cast<int>(std::lround(286 * *dialog.progress));
+            lv_obj_set_width(_progressFill, fill);
+            ui::hidden(_progressFill, fill == 0);
         } else if (_indeterminate) {
             lv_obj_set_width(_progressFill, 52);
             ui::hidden(_progressFill, false);
@@ -517,6 +543,9 @@ public:
                         dialog.rootScripts ? 83 : !dialog.metadata.empty() ? 66 : !dialog.identity.empty() ? 50 : 31;
         lv_obj_set_y(_body, top);
         const int lineHeight = 19;
+        const auto* bodyFont = transferring && dialog.progress ? uiFont12() : uiFont14();
+        lv_obj_set_style_text_font(_text, bodyFont, 0);
+        lv_obj_set_style_text_line_space(_text, lineHeight - lv_font_get_line_height(bodyFont), 0);
         const int height = std::max(lineHeight, ((130 - top) / lineHeight) * lineHeight);
         lv_obj_set_height(_body, installing ? lineHeight : height);
         auto body = dialog.text;
@@ -539,6 +568,13 @@ public:
         }
         while (!body.empty() && body.back() == '\n') body.pop_back();
         while (!diagnostics.empty() && diagnostics.back() == '\n') diagnostics.pop_back();
+        if (password && dialog.tone == DialogTone::Warning) {
+            const auto period = body.find('.');
+            if (period != std::string::npos && body.rfind("!", 0) != 0) {
+                body = "#FFAA42 ! " + body.substr(0, period + 1) + "#" + body.substr(period + 1);
+            }
+        }
+        lv_label_set_recolor(_text, password);
         lv_label_set_text(_text, body.c_str());
         lv_label_set_text(_diagnostics, diagnostics.c_str());
         ui::hidden(_diagnostics, diagnostics.empty());
@@ -546,10 +582,18 @@ public:
             lv_obj_update_layout(_box);
             lv_obj_set_y(_diagnostics, body.empty() ? 0 : (lv_obj_get_height(_text) + 18) / 19 * 19);
         }
-        lv_obj_set_style_text_color(_text, lv_color_hex(password && (dialog.tone == DialogTone::Warning || body.rfind("!", 0) == 0) ?
+        lv_obj_set_style_text_color(_text, lv_color_hex(password && body.rfind("!", 0) == 0 ?
                                                         ui::warning : ui::white), 0);
         if (!previousMode || !previousTitle) lv_obj_scroll_to_y(_body, 0, LV_ANIM_OFF);
         lv_obj_update_layout(_box);
+        lv_obj_set_style_pad_bottom(_body, 0, 0);
+        if (!rename.active && (_mode == PackageDialogMode::Review || _mode == PackageDialogMode::Result)) {
+            const int bodyBottom = diagnostics.empty() ? lv_obj_get_height(_text) :
+                lv_obj_get_y(_diagnostics) + lv_obj_get_height(_diagnostics);
+            const int remainder = bodyBottom > height ? (bodyBottom - height) % lineHeight : 0;
+            lv_obj_set_style_pad_bottom(_body, remainder ? lineHeight - remainder : 0, 0);
+            lv_obj_update_layout(_box);
+        }
         updateThumb();
         const bool canScroll = !rename.active &&
                                lv_obj_get_scroll_top(_body) + lv_obj_get_scroll_bottom(_body) > 0 &&
@@ -582,6 +626,8 @@ public:
                 default: break;
             }
         }
+        _logLabel = dialog.diagnosticLabel;
+        _logStart = diagnostics.empty() ? -1 : lv_obj_get_y(_diagnostics);
         _resultScroll = canScroll && !deletion.active && _mode == PackageDialogMode::Result;
         _scrollConfirm = canScroll && (deletion.active || _mode == PackageDialogMode::Review);
         _scrollAction = deletion.active ? local("Enter Delete", "Enter Smazat") :
@@ -672,21 +718,26 @@ private:
             return textWidth(value.substr(offsets[start], offsets[end] - offsets[start]), uiFont14());
         };
         constexpr int available = 264;
+        constexpr int textStart = 11;
+        constexpr int caretSpace = 4;
         const auto last = offsets.size() - 1;
         const auto at = std::min(cursor, last);
         size_t first = std::min(_inputFirst, at);
-        while (first < at && width(first, at) > available - 3) ++first;
+        while (first < at && width(first, at) > available - caretSpace) ++first;
         if (at == last) {
-            while (first > 0 && width(first - 1, at) <= available - 3) --first;
+            while (first > 0 && width(first - 1, at) <= available - caretSpace) --first;
         }
         _inputFirst = first;
         auto end = at;
-        while (end < last && width(first, end + 1) <= available) ++end;
+        while (end < last && width(first, end + 1) <= available - caretSpace) ++end;
         const auto visible = std::string(value.substr(offsets[first], offsets[end] - offsets[first]));
         lv_obj_set_style_text_font(_inputText, uiFont14(), 0);
         lv_obj_set_style_text_color(_inputText, lv_color_hex(ui::white), 0);
-        lv_label_set_text(_inputText, visible.c_str());
-        lv_obj_set_x(_inputCursor, 8 + width(first, at));
+        std::string displayed = visible;
+        // Reserve an actual gap between glyphs where the caret sits.
+        if (at < end) displayed.insert(offsets[at] - offsets[first], " ");
+        lv_label_set_text(_inputText, displayed.c_str());
+        lv_obj_set_x(_inputCursor, textStart + width(first, at) + (at == end));
         ui::hidden(_inputLeft, first == 0);
         ui::hidden(_inputRight, end == last);
     }
@@ -698,7 +749,33 @@ private:
 
     void updateResultHint()
     {
+        const int top = lv_obj_get_scroll_top(_body);
+        const bool logVisible = _logStart >= 0 && top + lv_obj_get_height(_body) > _logStart;
+        if (!_logLabel.empty() && _logStart >= 0) {
+            if (logVisible) {
+                ui::line(_identity, _identityText, 194, uiFont14(), std::string::npos, true);
+                lv_obj_set_width(_identity, 194);
+                lv_obj_set_x(_metaStatus, 208);
+                lv_obj_set_y(_metaStatus, 31);
+                lv_obj_set_width(_metaStatus, 88);
+                ui::line(_metaStatus, _logLabel, 88, uiFont12());
+            }
+            if (!logVisible) {
+                lv_obj_set_width(_identity, 288);
+                ui::line(_identity, _identityText, 288, uiFont14(), std::string::npos, true);
+            }
+            ui::hidden(_metaStatus, !logVisible);
+        }
         positionScrollHint("", local("Esc Back", "Esc Zpět"));
+        if (_logStart >= 0 && !logVisible && !_logLabel.empty()) {
+            lv_obj_set_x(_hint, 8);
+            lv_obj_set_width(_hint, 288);
+            lv_obj_set_style_text_align(_hint, LV_TEXT_ALIGN_CENTER, 0);
+            ui::hidden(_scrollUp, true);
+            ui::hidden(_scrollDown, true);
+            ui::keyLegend(_hint, keyHints({top > 0 ? "F↑" : "", local("X↓ View log", "X↓ K výpisu"),
+                                         local("Esc Back", "Esc Zpět")}, {}, 288));
+        }
     }
 
     void positionScrollHint(const char* action, const char* back)
@@ -737,7 +814,7 @@ private:
         lv_obj_set_y(_scrollTrack, lv_obj_get_y(_body));
         const int height = std::max(12, track * track / (track + range));
         lv_obj_set_height(_thumb, height);
-        lv_obj_set_y(_thumb, lv_obj_get_y(_body) + (track - height) * top / range);
+        lv_obj_set_y(_thumb, lv_obj_get_y(_body) + ui::scrollbarOffset(track - height, top, range));
     }
 
     void refreshEditHint()
@@ -815,6 +892,9 @@ private:
     std::string _last_title;
     std::string _editAction;
     std::string _editError;
+    std::string _logLabel;
+    std::string _identityText;
+    int _logStart = -1;
     bool _indeterminate = false;
     bool _resultScroll = false;
     bool _scrollConfirm = false;
@@ -837,6 +917,8 @@ void BrowserView::onEnter(lv_obj_t* parent)
     lv_obj_set_style_text_align(_free, LV_TEXT_ALIGN_RIGHT, 0);
     auto* footer = ui::box(_root, 0, 150, 320, 20, ui::bar);
     _keys = ui::label(footer, 8, 2, 304, uiFont12());
+    _placesMenuKey = ui::label(footer, 230, 2, 82, uiFont12());
+    lv_obj_set_style_text_align(_placesMenuKey, LV_TEXT_ALIGN_RIGHT, 0);
     _files = std::make_unique<Rows>(_root, ui::black);
     _actions = std::make_unique<Rows>(_root, ui::dialog);
     _actions->reserve(0, rowHeight);
@@ -906,6 +988,7 @@ void BrowserView::onEnter(lv_obj_t* parent)
         if (serial && serial != self._magic_seen) self._magic->generate(serial);
         else if (!serial) self._magic->stop();
         self._magic_seen = serial;
+        self._files->showScrollbar(!serial);
         self.updateChrome();
     });
 }
@@ -977,12 +1060,24 @@ void BrowserView::updateChrome()
     const bool movement = menu ? _vm.actionCount() > 1 : _vm.entries().get().size() > 1;
     const bool contextualEject = places && !menu && _usb_action && _vm.hasMultipleRemovableVolumes() && _vm.canEject();
     _files->showEjectContext(contextualEject);
-    const auto keys = _magic_seen ? local("Esc Back", "Esc Zpět") :
+    auto keys = _magic_seen ? local("Esc Back", "Esc Zpět") :
         browserKeyHint(places, _vm.canEject() && !_vm.languageMenu() && !contextualEject, _usb && !_usb_action,
-                       _vm.selectedEntry() != nullptr, movement, menu, _vm.hasMultipleRemovableVolumes());
+                       _vm.selectedEntry() && !_vm.selectedEntry()->special, movement, menu, _vm.hasMultipleRemovableVolumes());
+    const bool anchorMenu = places && !menu && !_magic_seen;
+    ui::hidden(_placesMenuKey, !anchorMenu);
+    int keysWidth = 304;
+    if (anchorMenu) {
+        const auto* tab = local("Tab Menu", "Tab Nabídka");
+        const int tabWidth = textWidth(tab, uiFont12()) + 1;
+        lv_obj_set_x(_placesMenuKey, 312 - tabWidth);
+        lv_obj_set_width(_placesMenuKey, tabWidth);
+        ui::keyLegend(_placesMenuKey, tab);
+        keysWidth = 304 - tabWidth - 9;
+    }
+    lv_obj_set_width(_keys, keysWidth);
     ui::keyLegend(_keys, keys);
     const bool languageError = menu && _vm.languageMenu() && _vm.status().get() == "Could not save language";
-    lv_label_set_text(_menu_exit, local("Hold Esc · Exit", "Podržet Esc · Ukončit"));
+    lv_label_set_text(_menu_exit, local("Hold Esc · Exit app", "Podržet Esc · Ukončit aplikaci"));
     lv_label_set_text(_menu_error, local("Could not save language", "Jazyk se nepodařilo uložit"));
     ui::hidden(_menu_error, !languageError);
     ui::hidden(_menu_error_icon, !languageError);

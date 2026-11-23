@@ -1119,7 +1119,7 @@ bool sameDirectory(const fs::path& source, const fs::path& destinationDirectory,
     return !error && equivalent;
 }
 
-fs::path copyName(const fs::path& source, int index, std::error_code& error)
+fs::path copyName(const fs::path& source, int index, std::string_view duplicateWord, std::error_code& error)
 {
     error.clear();
     const fs::file_status status = fs::symlink_status(source, error);
@@ -1138,7 +1138,7 @@ fs::path copyName(const fs::path& source, int index, std::error_code& error)
     }
 
     const fs::path filename  = source.filename();
-    const std::string suffix = index == 1 ? " copy" : " copy " + std::to_string(index);
+    const std::string suffix = " " + std::string(duplicateWord) + (index == 1 ? "" : " " + std::to_string(index));
     if (directory) {
         return filename.string() + suffix;
     }
@@ -1148,7 +1148,8 @@ fs::path copyName(const fs::path& source, int index, std::error_code& error)
 }  // namespace
 
 FilesystemTransferResult copyPathToDirectory(const fs::path& source, const fs::path& destinationDirectory,
-                                            const std::function<bool()>& connected, TransferControl* control)
+                                            const std::function<bool()>& connected, TransferControl* control,
+                                            std::string_view duplicateWord)
 {
     spdlog::info("FilesystemTransfer: copy requested source='{}' directory='{}'", source.string(),
                  destinationDirectory.string());
@@ -1164,7 +1165,7 @@ FilesystemTransferResult copyPathToDirectory(const fs::path& source, const fs::p
     }
 
     for (int index = 1; index <= kMaxCopyNameAttempts; ++index) {
-        const fs::path name = copyName(source, index, error);
+        const fs::path name = copyName(source, index, duplicateWord, error);
         if (error) {
             return failureResult(FilesystemTransferFailure::SourceNotFound, destinationDirectory, error,
                                  "cannot choose a name for the copy");

@@ -181,7 +181,7 @@ public:
         }
 
         _error_label = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Label>(_viewport->raw_ptr());
-        _error_label->setText(local("Preview unavailable", "Náhled není dostupný"));
+        _error_label->setText(local("Cannot read image", "Obrázek nelze přečíst"));
         _error_label->setTextFont(uiFont14());
         _error_label->setTextColor(lv_color_hex(ui::error));
         _error_label->setTextAlign(LV_TEXT_ALIGN_CENTER);
@@ -189,7 +189,7 @@ public:
         if (_preview_loaded) {
             _error_label->addFlag(LV_OBJ_FLAG_HIDDEN);
         } else {
-            const auto* message = local("Preview unavailable", "Náhled není dostupný");
+            const auto* message = local("Cannot read image", "Obrázek nelze přečíst");
             const int width = textWidth(message, uiFont14());
             const int start = (kPreviewWidth - width - 14) / 2;
             ui::errorCross(_viewport->raw_ptr(), start, (kPreviewHeight - 10) / 2);
@@ -380,11 +380,17 @@ private:
     void refreshZoom()
     {
         const bool zoomed = _scale != _fit_scale;
+        const auto* fit = local("Fit", "Přizpůsobit");
+        const int zoomWidth = std::max(62, textWidth(fit, uiFont12()) + 2);
+        lv_obj_set_x(_zoom_label, 312 - zoomWidth);
+        lv_obj_set_width(_zoom_label, zoomWidth);
+        const int titleWidth = _preview_loaded ? 296 - zoomWidth : 304;
         auto* title = lv_obj_get_child(_title_bar, 0);
-        lv_obj_set_width(title, zoomed ? 235 : 304);
-        ui::line(title, _title, zoomed ? 235 : 304, uiFont14(), std::string::npos, true);
+        lv_obj_set_width(title, titleWidth);
+        ui::line(title, _title, titleWidth, uiFont14(), std::string::npos, true);
         lv_label_set_text_fmt(_zoom_label, local("%u%%", "%u %%"), (_scale * 100 + _fit_scale / 2) / _fit_scale);
-        ui::hidden(_zoom_label, !zoomed);
+        if (!zoomed) lv_label_set_text(_zoom_label, fit);
+        ui::hidden(_zoom_label, !_preview_loaded);
     }
 
     void applyLayout()

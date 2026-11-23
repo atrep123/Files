@@ -2,10 +2,13 @@
 
 #include "core/files_language.hpp"
 #include "views/ui_style.hpp"
+#include "src/misc/lv_text_private.h"
+#include <vector>
 #ifdef FILES_LAYOUT_AUDIT
 #include "layout_audit/layout_audit.hpp"
 #endif
 
+#include <array>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
@@ -55,43 +58,32 @@ public:
         lv_obj_set_scroll_dir(_body, LV_DIR_VER);
         lv_obj_set_scrollbar_mode(_body, LV_SCROLLBAR_MODE_OFF);
 
-        auto* name = ui::label(_body, 8, 2, 300, uiFont14());
-        lv_obj_set_style_text_line_space(name, 17 - lv_font_get_line_height(uiFont14()), 0);
-        lv_label_set_text(name, _file.name.c_str());
-        lv_obj_update_layout(_body);
-        const int y = 2 + lv_obj_get_height(name);
-        auto* fields = ui::label(_body, 8, y, 69, uiFont12(), ui::secondary);
-        lv_label_set_text(fields, local("Kind\nSize\nModified\nHidden\nPath", "Typ\nVelikost\nZměněno\nSkrytý\nCesta"));
-        auto* values = ui::label(_body, 80, y, 227, uiMonoFont12());
-        const std::string details = std::string(kindText(_file.kind)) + "\n" +
-                                    (_file.directory ? "–" : sizeInUnits(_file.size)) + "\n" +
-                                    modifiedText(_file.modifiedUnixSec) + "\n" +
-                                    (_file.hidden ? local("Yes", "Ano") : local("No", "Ne"));
-        lv_label_set_text(values, details.c_str());
-        lv_obj_set_style_text_line_space(fields, 17 - lv_font_get_line_height(uiFont12()), 0);
-        lv_obj_set_style_text_line_space(values, 17 - lv_font_get_line_height(uiMonoFont12()), 0);
-        auto* path = ui::label(_body, 80, y + 68, 228, uiMonoFont12(), ui::secondary);
-        lv_obj_set_style_text_line_space(path, 17 - lv_font_get_line_height(uiMonoFont12()), 0);
-        const auto wrapped = wrapPath(_file.path, 228, uiMonoFont12());
-        lv_label_set_text(path, wrapped.c_str());
-        // Pad the scroll extent to the same grid as the visible rows.
-        lv_obj_set_height(_body, 119);
-        lv_obj_update_layout(_body);
-        const int bottom = lv_obj_get_y(path) + lv_obj_get_height(path);
-        auto* extent = ui::box(_body, 0, (bottom + 16) / 17 * 17 - 1, 1, 1, ui::black);
+        const int nameHeight = addWrapped(_file.name, 8, 0, 300, uiFont14(), ui::white, 19);
+        const auto kinds = std::string(kindText(_file.kind));
+        const auto size = _file.directory ? "–" : sizeInUnits(_file.size);
+        const std::array<std::pair<const char*, std::string>, 4> details{{
+            {local("Kind", "Typ"), kinds},
+            {local("Size", "Velikost"), size},
+            {local("Modified", "Změněno"), modifiedText(_file.modifiedUnixSec)},
+            {local("Hidden", "Skrytý"), _file.hidden ? local("Yes", "Ano") : local("No", "Ne")},
+        }};
+        constexpr int step = 17;
+        int y = nameHeight;
+        for (const auto& [field, value] : details) {
+            addLine(field, 8, y, 66, uiFont12(), ui::secondary);
+            addLine(value, 76, y, 232, uiMonoFont12(), ui::white);
+            y += step;
+        }
+        addLine(local("Path", "Cesta"), 8, y, 66, uiFont12(), ui::secondary);
+        const auto path = wrapPath(_file.path, 232, uiMonoFont12());
+        const int bottom = addWrapped(path, 76, y, 232, uiMonoFont12(), ui::secondary, step);
+        auto* extent = ui::box(_body, 0, 130 + (std::max(0, bottom - 130) + 16) / 17 * 17 - 1, 1, 1, ui::black);
         lv_obj_set_style_bg_opa(extent, LV_OPA_TRANSP, 0);
         lv_obj_update_layout(_body);
-        _track = ui::box(_root, 315, 20, 3, 130, ui::track);
+        _track = ui::scrollTrack(_root, 315, 20, 3, 130, ui::track);
         _thumb = ui::box(_root, 315, 20, 3, 12, ui::secondary);
         auto* footer = ui::caption(_root, 150, "");
-        _up = ui::label(footer, 8, 2, textWidth("F↑", uiFont12()) + 1, uiFont12());
-        _down = ui::label(footer, 34, 2, textWidth("X↓", uiFont12()) + 1, uiFont12());
-        lv_label_set_text(_up, "F↑");
-        lv_label_set_text(_down, "X↓");
-        auto* back = lv_obj_get_child(footer, 0);
-        lv_obj_set_x(back, 60);
-        lv_obj_set_width(back, 60);
-        ui::keyLegend(back, local("Esc Back", "Esc Zpět"));
+        _keys = lv_obj_get_child(footer, 0);
         updateThumb();
     }
 
@@ -101,6 +93,7 @@ public:
     {
         if (_root) lv_obj_delete(_root);
         _root = _body = _thumb = nullptr;
+        _lines.clear();
     }
 
     void onKey(uint32_t key, FilesRouter& router) override
@@ -123,22 +116,55 @@ private:
     lv_obj_t* _body = nullptr;
     lv_obj_t* _track = nullptr;
     lv_obj_t* _thumb = nullptr;
-    lv_obj_t* _up = nullptr;
-    lv_obj_t* _down = nullptr;
+    lv_obj_t* _keys = nullptr;
+    struct PositionedLine {
+        lv_obj_t* label;
+        int start;
+        int end;
+    };
+    std::vector<PositionedLine> _lines;
+
+    void addLine(const std::string& text, int x, int y, int width, const lv_font_t* font, uint32_t color)
+    {
+        auto* line = ui::label(_body, x, y, width, font, color);
+        lv_label_set_long_mode(line, LV_LABEL_LONG_MODE_CLIP);
+        lv_label_set_text(line, text.c_str());
+        _lines.push_back({line, y, y + lv_font_get_line_height(font)});
+    }
+
+    int addWrapped(const std::string& text, int x, int y, int width,
+                   const lv_font_t* font, uint32_t color, int step)
+    {
+        lv_text_attributes_t wrapping{0, 0, width, LV_TEXT_FLAG_NONE};
+        for (size_t start = 0; start < text.size();) {
+            const auto length = lv_text_get_next_line(text.c_str() + start, text.size() - start,
+                                                       font, nullptr, &wrapping);
+            if (!length) break;
+            auto line = text.substr(start, length);
+            if (!line.empty() && line.back() == '\n') line.pop_back();
+            addLine(line, x, y, width, font, color);
+            y += step;
+            start += length;
+        }
+        return y;
+    }
 
     void updateThumb()
     {
         const int top = lv_obj_get_scroll_top(_body);
         const int range = top + lv_obj_get_scroll_bottom(_body);
+        for (const auto& line : _lines) {
+            ui::hidden(line.label, line.start < top || line.end > top + 130);
+        }
         ui::hidden(_thumb, range <= 0);
         ui::hidden(_track, range <= 0);
-        ui::hidden(_up, top <= 0);
-        ui::hidden(_down, lv_obj_get_scroll_bottom(_body) <= 0);
+        ui::keyLegend(_keys, keyHints({top > 0 ? "F↑" : "", range > top ? "X↓" : "",
+                                      local("Esc Back", "Esc Zpět")}, {}));
         if (range <= 0) return;
         constexpr int track = 130;
-        const int height = std::max(12, track * 119 / (119 + range));
+        const int height = std::max(12, track * track / (track + range));
         lv_obj_set_height(_thumb, height);
-        lv_obj_set_y(_thumb, 20 + (track - height) * top / range);
+        lv_obj_set_y(_thumb, 20 + ui::scrollbarOffset(track - height, top, range));
     }
 };
 

@@ -45,7 +45,7 @@ struct PackageDialog {
     std::string fixedInstruction;
     std::string diagnosticLabel;
     std::string maskedPassword;
-    std::optional<unsigned> progress;
+    std::optional<double> progress;
     bool cancelling = false;
     std::string metadataStatus;
 };
@@ -210,6 +210,7 @@ private:
     std::string _transfer_destination_name;
     std::string _transfer_destination_caption;
     std::string _transfer_return_path;
+    std::optional<VolumeNotice> _return_notice;
     std::string _package_source_name;
     std::string _package_file_name;
     std::string transferProgress(uint64_t bytes) const;

@@ -24,6 +24,7 @@
 
 LV_FONT_DECLARE(font_noto_sans_semibold_12);
 LV_FONT_DECLARE(font_noto_sans_semibold_14);
+LV_FONT_DECLARE(font_noto_sans_clock_16);
 LV_FONT_DECLARE(font_noto_sans_sc_semibold_10);
 LV_FONT_DECLARE(font_noto_sans_sc_semibold_12);
 LV_FONT_DECLARE(font_noto_sans_sc_semibold_14);
@@ -103,6 +104,7 @@ json font_data(const lv_font_t* font)
         {files::uiKeyBitmapFont(), "Files key bitmap", 12},
         {&font_noto_sans_semibold_12, "Noto Sans SemiBold", 12},
         {&font_noto_sans_semibold_14, "Noto Sans SemiBold", 14},
+        {&font_noto_sans_clock_16, "Noto Sans SemiBold", 16},
         {&font_noto_sans_sc_semibold_10, "Noto Sans SC SemiBold", 10},
         {&font_noto_sans_sc_semibold_12, "Noto Sans SC SemiBold", 12},
         {&font_noto_sans_sc_semibold_14, "Noto Sans SC SemiBold", 14},
@@ -317,6 +319,8 @@ void collect(json& objects, std::vector<lv_obj_t*>& labels, lv_obj_t* obj,
                  {"overlay", lv_obj_has_flag(obj, overlay_flag)},
                  {"mono_separator", lv_obj_get_user_data(obj) == &mono_separator},
                  {"mono_cross", lv_obj_get_user_data(obj) == &mono_cross},
+                 {"mono_track", lv_obj_get_user_data(obj) == &mono_track},
+                 {"mono_toast", lv_obj_get_user_data(obj) == &mono_toast},
                  {"mono_frame", lv_obj_get_user_data(obj) == &mono_frame},
                  {"cover", lv_obj_has_flag(obj, overlay_flag) ||
                            (is_label && bg_opa == LV_OPA_COVER)},

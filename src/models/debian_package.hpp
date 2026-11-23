@@ -35,6 +35,7 @@ struct DebInspection {
     std::string plan;
     std::string problem;
     bool storeHelperPresent = false;
+    std::string nativeArchitecture;
 };
 
 enum class DebInstallState { Installed, PasswordRequired, AuthenticationFailed, Failed };

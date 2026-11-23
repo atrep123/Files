@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/sendfile.h>
+#include <sys/stat.h>
 #include <unistd.h>
 static int slowed;
 static int slow(int fd)
@@ -40,9 +41,29 @@ ssize_t write(int fd, const void *data, size_t count)
 }
 
 // Simulate a device rejecting cleanup of an interrupted copy's private payload.
+int mkdir(const char *name, mode_t mode)
+{
+    int (*next)(const char *, mode_t) = dlsym(RTLD_NEXT, "mkdir");
+    if (getenv("FILES_AUDIT_PAUSE_STAGE") && strstr(name, ".files-transfer-")) {
+        const char *marker_path = getenv("FILES_COPY_MARKER");
+        FILE *marker = marker_path ? fopen(marker_path, "w") : NULL;
+        if (marker) fclose(marker);
+        sleep(3);
+    }
+    return next(name, mode);
+}
+
 int unlinkat(int dirfd, const char *name, int flags)
 {
     int (*next)(int, const char *, int) = dlsym(RTLD_NEXT, "unlinkat");
+    const char *delete_marker = getenv("FILES_AUDIT_DELETE_MARKER");
+    if (delete_marker && strcmp(name, "unplug-after-removal.txt") == 0) {
+        const int result = next(dirfd, name, flags);
+        FILE *marker = fopen(delete_marker, "w");
+        if (marker) fclose(marker);
+        sleep(2);
+        return result;
+    }
     if (getenv("FILES_AUDIT_KEEP_STAGE")) {
         char relative[64], target[4096];
         snprintf(relative, sizeof relative, "/proc/self/fd/%d", dirfd);

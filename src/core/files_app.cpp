@@ -513,18 +513,20 @@ void FilesApp::showHelpPage()
     }
 
     _help_page = createTextPreviewPage(local("Help", "Nápověda"), local(
-        "F↑ X↓ Move · Enter Open\n"
-        "Tab Menu · E Eject\n"
-        "U Open USB / choose drive\n"
-        "Esc Back · Hold Esc · Exit\n"
-        "PgUp/PgDn  Move by page\n"
-        "Enter on .deb · Review package",
-        "F↑ X↓ Pohyb · Enter Otevřít\n"
-        "Tab Nabídka · E Vysunout\n"
-        "U Otevřít USB / vybrat disk\n"
-        "Esc Zpět · Podržet Esc · Ukončit\n"
-        "PgUp/PgDn Listovat\n"
-        "Enter na .deb · Náhled balíčku"));
+        "F #BDBEBD Up# · X #BDBEBD Down# · Enter #BDBEBD Open#\n"
+        "Tab #BDBEBD Menu# · E #BDBEBD Eject#\n"
+        "U #BDBEBD Open or choose drive#\n"
+        "Esc #BDBEBD Back#\n"
+        "Hold Esc #BDBEBD Exit app#\n"
+        "PgUp/PgDn #BDBEBD Move by page#\n"
+        "Enter on .deb #BDBEBD Review package#",
+        "F #BDBEBD Nahoru# · X #BDBEBD Dolů# · Enter #BDBEBD Otevřít#\n"
+        "Tab #BDBEBD Nabídka# · E #BDBEBD Vysunout#\n"
+        "U #BDBEBD Otevřít nebo vybrat disk#\n"
+        "Esc #BDBEBD Zpět#\n"
+        "Podržet Esc #BDBEBD Ukončit aplikaci#\n"
+        "PgUp/PgDn #BDBEBD Listovat#\n"
+        "Enter na .deb #BDBEBD Náhled balíčku#"));
     if (!_help_page) {
         spdlog::error("FilesApp: failed to create help page");
         return;
@@ -582,7 +584,7 @@ void FilesApp::updateVolumeNoticeVisibility()
         const auto* preview = _model.preview().page().get();
         const bool wide = !_help_active && preview && preview->usesWideFooter();
         const auto* hint = wide ? "U" : _browser_vm.hasMultipleRemovableVolumes() ?
-            local("U Drives", "U Disky") : local("U USB", "U USB");
+            local("U Choose drive", "U Vybrat disk") : local("U Open drive", "U Otevřít disk");
         const int width = textWidth(hint, uiFont12());
         lv_obj_set_x(_preview_usb_hint, 312 - width);
         lv_obj_set_width(_preview_usb_hint, width);
@@ -596,6 +598,9 @@ void FilesApp::updateVolumeNoticeVisibility()
     const bool wasHidden = lv_obj_has_flag(_volume_notice, LV_OBJ_FLAG_HIDDEN);
     ui::hidden(_volume_notice, !visible);
     const bool browsing = _router.page() == PageId::Browser;
+    if (auto* page = _model.preview().page().get(); page && !browsing) {
+        page->setNoticeHeight(visible ? (notice.text.find('\n') == std::string::npos ? 24 : 42) : 0);
+    }
     if (visible) {
         auto text = notice.text;
         if (notice.connectedMountId) {
@@ -638,7 +643,7 @@ void FilesApp::showExitHint()
     if (!_exit_hint || !lv_obj_is_valid(_exit_hint)) {
         return;
     }
-    ui::toast(_exit_hint, local("Hold Esc · Exit", "Podržet Esc · Ukončit"), _browser_view.toastY(24), ui::white);
+    ui::toast(_exit_hint, local("Hold Esc · Exit app", "Podržet Esc · Ukončit aplikaci"), _browser_view.toastY(24), ui::white);
     lv_obj_remove_flag(_exit_hint, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_exit_hint);
 }

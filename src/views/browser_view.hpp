@@ -28,6 +28,7 @@ private:
     lv_obj_t* _heading = nullptr;
     lv_obj_t* _path = nullptr;
     lv_obj_t* _free = nullptr;
+    lv_obj_t* _placesMenuKey = nullptr;
     lv_obj_t* _keys = nullptr;
     lv_obj_t* _menu_error = nullptr;
     lv_obj_t* _menu_error_icon = nullptr;

@@ -33,6 +33,23 @@ inline lv_obj_t* box(lv_obj_t* parent, int x, int y, int w, int h, uint32_t colo
     return obj;
 }
 
+inline lv_obj_t* scrollTrack(lv_obj_t* parent, int x, int y, int w, int h, uint32_t color)
+{
+    auto* trackBox = box(parent, x, y, w, h, color);
+#ifdef FILES_LAYOUT_AUDIT
+    lv_obj_set_user_data(trackBox, &layout_audit::mono_track);
+#endif
+    return trackBox;
+}
+
+inline int scrollbarOffset(int travel, int position, int range)
+{
+    if (position <= 0 || travel <= 0) return 0;
+    if (position >= range) return travel;
+    if (travel < 2) return 0;
+    return std::clamp(static_cast<int>((int64_t{travel} * position + range / 2) / range), 1, travel - 1);
+}
+
 inline lv_obj_t* label(lv_obj_t* parent, int x, int y, int width, const lv_font_t* font, uint32_t color = white)
 {
     auto* obj = lv_label_create(parent);
@@ -124,6 +141,9 @@ inline lv_obj_t* caption(lv_obj_t* parent, int y, const std::string& text, const
 
 inline void toast(lv_obj_t* label, std::string_view text, int y, uint32_t color)
 {
+#ifdef FILES_LAYOUT_AUDIT
+    lv_obj_set_user_data(label, &layout_audit::mono_toast);
+#endif
     const auto split = text.find('\n');
     const bool twoLines = split != std::string_view::npos;
     const std::string symbol = color == success ? "✓ " : color == warning ? "! " : "";
@@ -134,7 +154,7 @@ inline void toast(lv_obj_t* label, std::string_view text, int y, uint32_t color)
             detail = ui::label(label, 0, lv_font_get_line_height(uiFont12()), 296, uiFont12());
             lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0);
         }
-        line(detail, std::string(text.substr(split + 1)), 296, uiFont12(), 36);
+        line(detail, std::string(text.substr(split + 1)), 296, uiFont12(), 36, true);
     }
     if (detail) hidden(detail, !twoLines);
     const int height = twoLines ? 42 : 24;

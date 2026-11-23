@@ -13,6 +13,7 @@ class AudioPreviewView {
 public:
     explicit AudioPreviewView(AudioPreviewViewModel& viewModel);
     ~AudioPreviewView();
+    void setNoticeHeight(int height);
 
     AudioPreviewView(const AudioPreviewView&)            = delete;
     AudioPreviewView& operator=(const AudioPreviewView&) = delete;

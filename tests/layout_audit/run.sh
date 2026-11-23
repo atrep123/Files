@@ -67,7 +67,8 @@ cat >/usr/bin/apt-get <<'EOF'
 #!/bin/sh
 case " $* " in *' --simulate '*)
     if [ -e "$UX2_ROOT/apt-fails" ]; then
-        echo 'E: dependency resolution failed for ux2-files-test' >&2
+        printf '%s\n' 'E: dependency resolution failed for ux2-files-test' \
+            'Required packages are unavailable.' 'Check the configured package sources.' >&2
         exit 1
     fi
     ;;
@@ -80,7 +81,7 @@ cat >/usr/bin/sudo <<'EOF'
 #!/bin/sh
 if [ -e "$UX2_ROOT/install-fails" ]; then
     sleep 0.55
-    printf '%s\n' 'No space left on device.' '' 'dpkg: could not finish unpacking the package.' '' 'dpkg --audit reported no unfinished packages. Check the error above before retrying.' >&2
+    printf '%s\n' 'No space left on device.' '' 'dpkg: could not finish unpacking the package.' '' 'dpkg --audit: no unfinished packages.' >&2
     exit 2
 fi
 if [ -e "$UX2_ROOT/reject-password" ] && [ "$1" = -S ]; then

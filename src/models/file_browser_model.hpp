@@ -8,6 +8,7 @@
 #include <tools/observable/single_observable.hpp>
 #include <string>
 #include <vector>
+#include <string_view>
 
 namespace files {
 
@@ -69,7 +70,8 @@ public:
     FileOperationResult refreshSelecting(const std::string& preferredPath);
     static FileTransferResult performTransfer(const FileEntry& entry, const std::string& destinationDirectory,
                                                uint64_t destinationMountId, bool move,
-                                               internal::TransferControl* control = nullptr);
+                                               internal::TransferControl* control = nullptr,
+                                              std::string_view duplicateWord = "copy");
     void refresh(bool preserveSelected = true);
     void selectPrevious();
     void selectNext();

@@ -638,7 +638,7 @@ FileOperationResult FileBrowserModel::transferEntry(const FileEntry& entry, cons
 
 FileTransferResult FileBrowserModel::performTransfer(const FileEntry& entry, const std::string& destinationDirectory,
                                                      uint64_t destinationMountId, bool move,
-                                                     internal::TransferControl* control)
+                                                     internal::TransferControl* control, std::string_view duplicateWord)
 {
     if (entry.mountRoot || destinationDirectory.empty()) {
         return {errorResult(FileOperationStatus::InvalidSelection, "Open a folder first")};
@@ -671,7 +671,8 @@ FileTransferResult FileBrowserModel::performTransfer(const FileEntry& entry, con
     }
     const auto pinnedSource = sourceDirectory.path() / source.filename();
     const auto transfer = move ? internal::movePathToDirectory(pinnedSource, destination.path(), connected, control)
-                               : internal::copyPathToDirectory(pinnedSource, destination.path(), connected, control);
+                               : internal::copyPathToDirectory(pinnedSource, destination.path(), connected, control,
+                                                               duplicateWord);
     result.destinationState = transfer.destinationState;
     if (!transfer) {
         if (!transfer.destination.empty()) {
@@ -793,6 +794,9 @@ FileOperationResult FileBrowserModel::deleteSelected()
         return filesystemError("Cannot check for mounted filesystems", ec);
     }
     fs::remove_all(directory.path() / deletedPath.filename(), ec);
+    if (!directory.connected()) {
+        return errorResult(FileOperationStatus::Failed, "Drive disconnected during deletion");
+    }
     if (ec) {
         return filesystemError("Delete", ec);
     }

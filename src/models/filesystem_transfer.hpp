@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <string_view>
 #include <functional>
 #include <string>
 #include <system_error>
@@ -71,7 +72,7 @@ private:
 FilesystemTransferResult copyPathToDirectory(const std::filesystem::path& source,
                                              const std::filesystem::path& destinationDirectory,
                                              const std::function<bool()>& connected = {},
-                                             TransferControl* control = nullptr);
+                                             TransferControl* control = nullptr, std::string_view duplicateWord = "copy");
 
 // Moves into destinationDirectory without replacing an existing entry. Cross-device
 // moves sync the staged copy and its final parent before removing the source.

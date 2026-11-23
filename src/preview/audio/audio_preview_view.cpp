@@ -48,7 +48,7 @@ constexpr int32_t kProgressBarRadius       = 2;
 constexpr uint32_t kProgressTrackColor     = ui::black;
 constexpr uint32_t kProgressFillColor      = ui::accent;
 // Keep both clocks above the one-row connection notice.
-constexpr int32_t kTimeLabelY              = 111;
+constexpr int32_t kTimeLabelY              = 114;
 constexpr int32_t kTimeLabelWidth          = 96;
 constexpr uint32_t kTimeTextColor          = ui::secondary;
 std::string fileTitle(const AudioPreviewFile& file)
@@ -112,6 +112,13 @@ public:
         lv_obj_invalidate(_panel->raw_ptr());
     }
 
+    void setNoticeHeight(int height)
+    {
+        if (_noticeHeight == height) return;
+        _noticeHeight = height;
+        lv_obj_invalidate(_panel->raw_ptr());
+    }
+
     void setPlaying(bool playing)
     {
         _color = playing ? kWaveformPlayingColor : kWaveformIdleColor;
@@ -124,6 +131,7 @@ private:
     std::vector<float> _bars;
     float _duration_sec = 0.0f;
     float _progress_sec = 0.0f;
+    int _noticeHeight = 0;
 
     lv_color_t currentColor() const
     {
@@ -218,7 +226,8 @@ private:
         line_dsc.color = currentColor();
         line_dsc.width = kWaveformBarWidth;
 
-        const int32_t mid_y = coords.y1 + kWaveformHeight / 2;
+        const int32_t maxHeight = _noticeHeight == 42 ? 21 : kWaveformMaxBarHeight;
+        const int32_t mid_y = _noticeHeight == 42 ? 78 : coords.y1 + kWaveformHeight / 2;
         const int32_t start_x =
             coords.x1 + (kWaveformWidth - ((kWaveformVisibleBarCount - 1) * kWaveformBarPitch + 1)) / 2;
 
@@ -227,10 +236,12 @@ private:
             if (value < 0.0f) continue;
             int32_t bar_h = kWaveformMinBarHeight +
                             static_cast<int32_t>(std::round(value *
-                                                            (kWaveformMaxBarHeight - kWaveformMinBarHeight)));
-            bar_h = std::clamp(bar_h, kWaveformMinBarHeight, kWaveformMaxBarHeight);
+                                                            (maxHeight - kWaveformMinBarHeight)));
+            bar_h = std::clamp(bar_h, kWaveformMinBarHeight, maxHeight);
 
             const int32_t x    = start_x + static_cast<int32_t>(i) * kWaveformBarPitch;
+            // Separate the cursor from both waveform colors with a black pixel.
+            if (x >= 158 && x <= 162) continue;
             const int32_t half = bar_h / 2;
             line_dsc.p1.x      = x;
             line_dsc.p1.y      = mid_y - half;
@@ -342,14 +353,14 @@ void AudioPreviewView::attach(lv_obj_t* parent)
     _progress_bar = std::make_unique<ProgressBar>(_root->raw_ptr());
 
     _elapsed_label = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Label>(_root->raw_ptr());
-    _elapsed_label->setTextFont(uiMonoFont12());
+    _elapsed_label->setTextFont(&font_noto_sans_clock_16);
     _elapsed_label->setTextColor(lv_color_hex(kTimeTextColor));
     _elapsed_label->setTextAlign(LV_TEXT_ALIGN_LEFT);
     _elapsed_label->setSize(kTimeLabelWidth, LV_SIZE_CONTENT);
     _elapsed_label->setPos(kProgressBarX, kTimeLabelY);
 
     _remaining_label = std::make_unique<smooth_ui_toolkit::lvgl_cpp::Label>(_root->raw_ptr());
-    _remaining_label->setTextFont(uiMonoFont12());
+    _remaining_label->setTextFont(&font_noto_sans_clock_16);
     _remaining_label->setTextColor(lv_color_hex(kTimeTextColor));
     _remaining_label->setTextAlign(LV_TEXT_ALIGN_RIGHT);
     _remaining_label->setSize(kTimeLabelWidth, LV_SIZE_CONTENT);
@@ -395,6 +406,15 @@ void AudioPreviewView::detach()
     _title_label.reset();
     _state_label = _speed_label = _error_panel = nullptr;
     _root.reset();
+}
+
+void AudioPreviewView::setNoticeHeight(int height)
+{
+    if (!_waveform || !_playhead) return;
+    _waveform->setNoticeHeight(height);
+    const bool compact = height == 42;
+    _playhead->setSize(kPlayheadWidth, compact ? 30 : kPlayheadHeight);
+    _playhead->align(LV_ALIGN_CENTER, 0, compact ? -6 : kWaveformY);
 }
 
 void AudioPreviewView::renderState(AudioPlaybackState state)
@@ -481,8 +501,8 @@ void AudioPreviewView::updateKeyBar()
         state == AudioPlaybackState::Paused ? local("Resume", "Pokračovat") : local("Play", "Hrát");
     _key_bar->setSlots({{8, 43, _canRewind ? "5 −10 s" : ""},
                         {56, 81, std::string("6 ") + action},
-                        {140, 43, _canAdvance ? "7 +10 s" : ""},
-                        {185, 62, local("8 Speed", "8 Rychlost")},
+                        {137, 43, _canAdvance ? "7 +10 s" : ""},
+                        {187, 62, local("8 Speed", "8 Rychlost")},
                         {251, 52, local("Esc Back", "Esc Zpět")}});
 }
 

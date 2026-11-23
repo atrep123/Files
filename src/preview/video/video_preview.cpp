@@ -203,7 +203,11 @@ public:
         _root = ui::box(parent, 0, 0, 320, 170, ui::black);
         auto* header = ui::caption(_root, 0, _title, uiFont14());
         _heading = lv_obj_get_child(header, 0);
-        _state = ui::label(header, 178, 2, 134, uiFont12());
+        _state = ui::label(header, 250, 2, 62, uiFont12());
+        const auto* paused = local("Ⅱ Paused", "Ⅱ Pauza");
+        _pauseLabel = ui::label(header, 180, 2, textWidth(paused, uiFont12()) + 1, uiFont12());
+        lv_label_set_text(_pauseLabel, paused);
+        ui::hidden(_pauseLabel, true);
         lv_obj_set_style_text_align(_state, LV_TEXT_ALIGN_RIGHT, 0);
         ui::hidden(_state, true);
         _image = lv_image_create(_root);
@@ -281,9 +285,11 @@ private:
     bool _failed   = false;
     lv_obj_t* _root = nullptr;
     lv_obj_t* _status = nullptr;
+    uint64_t _last_clock = 0;
     std::unique_ptr<BottomKeyBar> _keys;
     lv_obj_t* _heading = nullptr;
     lv_obj_t* _state = nullptr;
+    lv_obj_t* _pauseLabel = nullptr;
     lv_obj_t* _detail = nullptr;
 
     lv_obj_t* _image = nullptr;
@@ -316,6 +322,8 @@ private:
             _frame_ready = true;
             _still_pending = false;
             refreshKeys();
+        } else if (_displayed_ms / 1000 != _last_clock) {
+            refreshClock();
         }
     }
 
@@ -326,26 +334,38 @@ private:
         _received = 0;
     }
 
-    void refreshKeys()
+    void refreshClock()
     {
-        bool ready = !_failed && !_finished;
-        ready = ready && _frame_ready;
-        const bool paused = ready && _paused;
-        ui::hidden(_state, !paused);
+        const bool ready = !_failed && !_finished && _frame_ready;
+        ui::hidden(_state, !ready);
+        ui::hidden(_pauseLabel, !ready || !_paused);
         int titleWidth = 304;
-        if (paused) {
+        if (ready) {
             const auto seconds = _displayed_ms / 1000;
+            _last_clock = seconds;
             const auto secondPart = seconds % 60;
-            const auto status = std::string(local("Ⅱ Paused  ", "Ⅱ Pauza  ")) +
-                std::to_string(seconds / 60) + ":" + (secondPart < 10 ? "0" : "") + std::to_string(secondPart);
-            const int width = textWidth(status, uiFont12());
-            lv_obj_set_x(_state, 312 - width);
-            lv_obj_set_width(_state, width);
-            lv_label_set_text(_state, status.c_str());
-            titleWidth -= width + 8;
+            const auto clock = std::to_string(seconds / 60) + ":" + (secondPart < 10 ? "0" : "") + std::to_string(secondPart);
+            const int clockWidth = std::max(textWidth("10:00", uiFont12()), textWidth(clock, uiFont12())) + 1;
+            const int clockX = 312 - clockWidth;
+            lv_obj_set_x(_state, clockX);
+            lv_obj_set_width(_state, clockWidth);
+            lv_label_set_text(_state, clock.c_str());
+            titleWidth -= clockWidth + 8;
+            if (_paused) {
+                const int pauseWidth = textWidth(lv_label_get_text(_pauseLabel), uiFont12()) + 1;
+                lv_obj_set_x(_pauseLabel, clockX - pauseWidth - 8);
+                titleWidth -= pauseWidth + 8;
+            }
         }
         lv_obj_set_width(_heading, titleWidth);
         ui::line(_heading, _title, titleWidth, uiFont14(), std::string::npos, true);
+    }
+
+    void refreshKeys()
+    {
+        refreshClock();
+        const bool ready = !_failed && !_finished && _frame_ready;
+        const bool paused = ready && _paused;
         if (ready) {
             _keys->setSlots({{8, 121, paused ? local("Space Play", "Mezera Pokračovat") :
                                               local("Space Pause", "Mezera Pauza")},

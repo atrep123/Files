@@ -30,13 +30,14 @@ bool packageNameValid(const std::string& name)
            name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789+.-") == std::string::npos;
 }
 
-bool supportedArchitecture(const std::string& architecture)
+bool supportedArchitecture(const std::string& architecture, std::string& nativeArchitecture)
 {
     if (architecture == "all") {
         return true;
     }
     const auto native = runCommand({"/usr/bin/dpkg", "--print-architecture"});
-    if (native && trim(native.output) == architecture) {
+    if (native) nativeArchitecture = trim(native.output);
+    if (nativeArchitecture == architecture) {
         return true;
     }
     const auto foreign = runCommand({"/usr/bin/dpkg", "--print-foreign-architectures"});
@@ -281,9 +282,10 @@ DebInspection inspectDeb(const fs::path& source, uint64_t mountId, const Command
     if (!contents) {
         return {nullptr, "Damaged Debian package\n\n" + cleanCommandText(contents.output)};
     }
-    if (!supportedArchitecture(metadata.architecture)) {
+    std::string nativeArchitecture;
+    if (!supportedArchitecture(metadata.architecture, nativeArchitecture)) {
         const auto problem = "Unsupported architecture: " + metadata.architecture;
-        return {std::move(package), problem + "\n\n" + details, false, {}, problem};
+        return {std::move(package), problem + "\n\n" + details, false, {}, problem, false, std::move(nativeArchitecture)};
     }
     package->sha256 = sha256CommandOutput(readSnapshot(reviewed.fd, {"/usr/bin/sha256sum"}));
     if (package->sha256.empty()) {
