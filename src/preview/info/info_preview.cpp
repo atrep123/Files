@@ -58,7 +58,7 @@ public:
         lv_obj_set_scroll_dir(_body, LV_DIR_VER);
         lv_obj_set_scrollbar_mode(_body, LV_SCROLLBAR_MODE_OFF);
 
-        const int nameHeight = addWrapped(_file.name, 8, 0, 300, uiFont14(), ui::white, 19);
+        const int nameHeight = addWrapped(_file.name, 8, 2, 300, uiFont14(), ui::white, 19);
         const auto kinds = std::string(kindText(_file.kind));
         const auto size = _file.directory ? "–" : sizeInUnits(_file.size);
         const std::array<std::pair<const char*, std::string>, 4> details{{

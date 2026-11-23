@@ -498,12 +498,12 @@ void AudioPreviewView::updateKeyBar()
     }
     const auto* action = state == AudioPlaybackState::Playing ? local("Pause", "Pauza") :
         state == AudioPlaybackState::Stopped ? local("Replay", "Znovu") :
-        state == AudioPlaybackState::Paused ? local("Resume", "Pokračovat") : local("Play", "Hrát");
+        state == AudioPlaybackState::Paused ? local("Resume", "Hrát") : local("Play", "Hrát");
     _key_bar->setSlots({{8, 43, _canRewind ? "5 −10 s" : ""},
-                        {56, 81, std::string("6 ") + action},
-                        {137, 43, _canAdvance ? "7 +10 s" : ""},
-                        {187, 62, local("8 Speed", "8 Rychlost")},
-                        {251, 52, local("Esc Back", "Esc Zpět")}});
+                        {65, 60, std::string("6 ") + action},
+                        {129, 43, _canAdvance ? "7 +10 s" : ""},
+                        {182, 65, local("8 Speed", "8 Rychlost")},
+                        {257, 55, local("Esc Back", "Esc Zpět")}});
 }
 
 void AudioPreviewView::onStateChanged(void* context, const AudioPlaybackState& state)

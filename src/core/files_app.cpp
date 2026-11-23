@@ -517,16 +517,16 @@ void FilesApp::showHelpPage()
         "Tab #BDBEBD Menu# · E #BDBEBD Eject#\n"
         "U #BDBEBD Open or choose drive#\n"
         "Esc #BDBEBD Back#\n"
-        "Hold Esc #BDBEBD Exit app#\n"
+        "Hold Esc #BDBEBD Exit#\n"
         "PgUp/PgDn #BDBEBD Move by page#\n"
-        "Enter on .deb #BDBEBD Review package#",
+        "Enter #BDBEBD Review .deb package#",
         "F #BDBEBD Nahoru# · X #BDBEBD Dolů# · Enter #BDBEBD Otevřít#\n"
         "Tab #BDBEBD Nabídka# · E #BDBEBD Vysunout#\n"
         "U #BDBEBD Otevřít nebo vybrat disk#\n"
         "Esc #BDBEBD Zpět#\n"
-        "Podržet Esc #BDBEBD Ukončit aplikaci#\n"
+        "Podržet Esc #BDBEBD Ukončit#\n"
         "PgUp/PgDn #BDBEBD Listovat#\n"
-        "Enter na .deb #BDBEBD Náhled balíčku#"));
+        "Enter #BDBEBD Náhled balíčku .deb#"));
     if (!_help_page) {
         spdlog::error("FilesApp: failed to create help page");
         return;
@@ -617,7 +617,7 @@ void FilesApp::updateVolumeNoticeVisibility()
             _notice_text = text;
             _notice_y = y;
             ui::toast(_volume_notice, text, y, notice.tone == DialogTone::Success ? ui::success :
-                      notice.tone == DialogTone::Warning ? ui::warning : ui::white);
+                      notice.tone == DialogTone::Warning ? ui::warning : ui::white, notice.connectedMountId != 0);
             lv_obj_move_foreground(_volume_notice);
         }
     } else if (browsing) {
@@ -643,7 +643,7 @@ void FilesApp::showExitHint()
     if (!_exit_hint || !lv_obj_is_valid(_exit_hint)) {
         return;
     }
-    ui::toast(_exit_hint, local("Hold Esc · Exit app", "Podržet Esc · Ukončit aplikaci"), _browser_view.toastY(24), ui::white);
+    ui::toast(_exit_hint, local("Hold Esc · Exit", "Podržet Esc · Ukončit"), _browser_view.toastY(24), ui::white);
     lv_obj_remove_flag(_exit_hint, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(_exit_hint);
 }

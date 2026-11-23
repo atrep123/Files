@@ -74,15 +74,22 @@ void requireBrowserText()
 
     for (unsigned state = 0; state < 64; ++state) {
         const bool usb = state & 4;
-        const auto hint = files::browserKeyHint(state & 1, state & 2, usb, state & 8, state & 16, state & 32);
-        lv_point_t size{};
-        lv_text_get_size(&size, hint.c_str(), files::uiFont12(), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        check(size.x <= 304 && files::textLength(hint) <= 44, hint.c_str());
+        const bool menu = state & 32;
+        const auto hints = files::browserKeyHints(state & 1, state & 2, usb, state & 8, state & 16, menu);
+        const auto* font = files::uiFont12();
+        check(files::textWidth(hints.leading, font) <= (hints.trailing.empty() ? 304 : files::BrowserKeyHints::leadingWidth),
+              hints.leading.c_str());
+        check(files::textWidth(hints.trailing, font) <= files::BrowserKeyHints::trailingWidth,
+              hints.trailing.c_str());
+        const auto hint = hints.leading + (hints.leading.empty() || hints.trailing.empty() ? "" : " ") + hints.trailing;
+        check(files::textLength(hint) <= 44, hint.c_str());
         check(usb || hint.find("U ") == std::string::npos, "USB shortcut needs a connected drive");
         if ((state & 16) != 0) check(hint.find("F↑") == 0, "movement must be the first shortcut");
+        if (!menu && !hints.trailing.empty()) check(hints.trailing.find("Tab") == 0, "Tab must start the second group");
+        if (!menu && !(state & 1)) check(hint.find("Esc Back") != std::string::npos, "missing Back action");
     }
-    const auto drive = files::browserKeyHint(true, true, true, true, true, false);
-    check(drive.find("E Eject") != std::string::npos && drive.find("Enter") != std::string::npos,
+    const auto drive = files::browserKeyHints(true, true, false, true, true, false);
+    check(drive.trailing.find("E Eject") != std::string::npos && drive.leading.find("Enter") != std::string::npos,
           "selected drive should offer eject and open shortcuts");
     requireGlyph({files::uiFont12(), "footer arrows"}, 0x2191);
     requireGlyph({files::uiFont12(), "footer arrows"}, 0x2193);

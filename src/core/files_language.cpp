@@ -149,7 +149,7 @@ std::string localizedMessage(std::string_view message)
     }
     static constexpr std::pair<std::string_view, std::string_view> prefixes[] = {
         {"Created copy ", "Vytvořena kopie "},
-        {"In clipboard: ", "Ve schránce: "}, {"Clipboard for move: ", "K přesunu: "},
+        {"Ready to paste: ", "Připraveno k vložení: "}, {"Clipboard for move: ", "K přesunu: "},
         {"Renamed to ", "Přejmenováno na "},
         {"Copied ", "Zkopírováno "}, {"Cut ", "Vyjmuto "}, {"Moved ", "Přesunuto "},
         {"Renamed ", "Přejmenováno "}, {"Deleted ", "Smazáno "}, {"Created ", "Složka vytvořena: "},

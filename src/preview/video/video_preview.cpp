@@ -358,7 +358,7 @@ private:
             }
         }
         lv_obj_set_width(_heading, titleWidth);
-        ui::line(_heading, _title, titleWidth, uiFont14(), std::string::npos, true);
+        lv_label_set_text(_heading, fitWordEdges(_title, titleWidth, uiFont14()).c_str());
     }
 
     void refreshKeys()
@@ -367,7 +367,7 @@ private:
         const bool ready = !_failed && !_finished && _frame_ready;
         const bool paused = ready && _paused;
         if (ready) {
-            _keys->setSlots({{8, 121, paused ? local("Space Play", "Mezera Pokračovat") :
+            _keys->setSlots({{8, 121, paused ? local("Space Resume", "Mezera Pokračovat") :
                                               local("Space Pause", "Mezera Pauza")},
                              {136, 83, local("Z← C→ Seek", "Z← C→ Posun")},
                              {228, 53, local("Esc Back", "Esc Zpět")}});

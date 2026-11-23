@@ -109,6 +109,36 @@ std::string fitText(std::string text, int width, const lv_font_t* font, size_t l
     return build(left, right);
 }
 
+std::string fitWordEdges(std::string text, int width, const lv_font_t* font, size_t limit)
+{
+    std::replace_if(text.begin(), text.end(), [](unsigned char c) { return c < 0x20 || c == 0x7F; }, ' ');
+    const auto fallback = fitText(text, width, font, limit, true);
+    if (fallback == text) return fallback;
+    // Prefer the final version and the word before it, where the name has them.
+    const auto lastSpace = text.rfind(' ');
+    if (lastSpace == std::string::npos || lastSpace == 0) return fallback;
+    const auto isVersion = lastSpace + 2 < text.size() && text[lastSpace + 1] == 'v' &&
+        std::isdigit(static_cast<unsigned char>(text[lastSpace + 2]));
+    const auto previousSpace = isVersion ? text.rfind(' ', lastSpace - 1) : std::string::npos;
+    const auto suffixStart = previousSpace == std::string::npos ? lastSpace : previousSpace;
+    for (auto prefixEnd = text.rfind(' ', suffixStart - 1);
+         prefixEnd != std::string::npos && prefixEnd > 0;
+         prefixEnd = text.rfind(' ', prefixEnd - 1)) {
+        const auto prefix = text.substr(0, prefixEnd);
+        const auto suffix = text.substr(suffixStart + 1);
+        if (limit == std::string::npos) {
+            auto spaced = prefix + " … " + suffix;
+            if (fits(spaced, width, limit, font)) return spaced;
+        } else if (prefix.size() >= 2 && prefix.compare(prefix.size() - 2, 2, " a") == 0) {
+            // Keep short leading articles with the part of the name being elided.
+            continue;
+        }
+        auto compact = prefix + "…" + suffix;
+        if (fits(compact, width, limit, font)) return compact;
+    }
+    return fallback;
+}
+
 std::string fitPackageVersion(std::string_view metadata, int width)
 {
     const auto* font = uiFont12();
@@ -136,8 +166,10 @@ std::string fitPath(std::string_view path, int width, const lv_font_t* font)
     if (path.front() == '/' && parent != std::string_view::npos) {
         const auto first = path.find('/', 1);
         if (first < parent) {
-            const auto compact = std::string(path.substr(0, first + 1)) + "…" + std::string(path.substr(parent));
-            if (textWidth(compact, font) <= width) return compact;
+            for (auto slash = path.find('/', first + 1); slash <= parent; slash = path.find('/', slash + 1)) {
+                auto compact = std::string(path.substr(0, first + 1)) + "…" + std::string(path.substr(slash));
+                if (textWidth(compact, font) <= width) return compact;
+            }
         }
     }
     for (auto slash : {parent, leaf}) {
@@ -187,44 +219,49 @@ std::string keyHints(std::initializer_list<std::string_view> primary,
     return text;
 }
 
-std::string browserKeyHint(bool places, bool eject, bool usb, bool selected, bool canMove, bool menu, bool multipleUsb)
+BrowserKeyHints browserKeyHints(bool places, bool eject, bool usb, bool selected, bool movement, bool menu,
+                                bool multipleUsb)
 {
-    const auto* open = local("Enter Open", "Enter Otevřít");
+    const auto* movementHint = movement ? "F↑ X↓" : "";
+    const auto* open = selected ? local("Enter Open", "Enter Otevřít") : "";
     const auto* back = local("Esc Back", "Esc Zpět");
-    const auto* actions = local("Tab Menu", "Tab Nabídka");
+    const auto* tab = local("Tab Menu", "Tab Nabídka");
     const auto* ejectHint = eject ? local("E Eject", "E Vysunout") : "";
-    const auto* movement = canMove ? "F↑ X↓" : "";
-    const auto* usbHint = !usb ? "" : multipleUsb ? local("U Choose drive", "U Vybrat disk") :
-                                                    local("U Open drive", "U Otevřít disk");
-    if (menu) {
-        return keyHints({movement, local("Enter Select", "Enter Vybrat"), back, usbHint}, {});
+    const auto* usbHint = !usb ? "" : multipleUsb ?
+        local("U Choose drive", "U Vybrat disk") : local("U Open drive", "U Otevřít disk");
+    if (menu) return {keyHints({movementHint, local("Enter Select", "Enter Vybrat"), back, usbHint}, {}), {}};
+
+    const auto* compactOpen = selected ? local("↵ Open", "↵ Otevřít") : "";
+    if (!places && eject && !movement) {
+        return {keyHints({compactOpen, ejectHint, tab, back}, {}), {}};
     }
-    if (places) {
-        const auto* menuHint = local("Tab Menu", "Tab Nabídka");
-        const int width = 304 - textWidth(menuHint, uiFont12()) - 10;
-        auto keys = keyHints({movement, selected ? open : "", ejectHint}, {usbHint}, width);
-        if ((eject && keys.find(ejectHint) == std::string::npos) ||
-            textLength(keys) + textLength(menuHint) + textLength(keyGap) > 44)
-            keys = keyHints({movement, selected ? "Enter ↵" : "", ejectHint}, {}, width);
-        return keys;
-    }
-    if (eject) {
-        const auto* driveMovement = canMove ? "F↑X↓" : "";
-        // The compact USB footer keeps both actions and uses full verbs.
-        const auto* compactBack = local("Esc Back", "Esc");
-        auto keys = keyHints({driveMovement, selected ? open : "", ejectHint, actions, compactBack}, {});
-        if (keys.find(compactBack) == std::string::npos && canMove && selected) {
-            keys = keyHints({movement, open, actions, back}, {});
-        } else if (keys.find(compactBack) == std::string::npos) {
-            keys = keyHints({driveMovement, selected ? "Enter ↵" : "", ejectHint, actions, back}, {});
+
+    // Tab stays in the same column in Places and in the ordinary file list.
+    const int leadWidth = BrowserKeyHints::leadingWidth;
+    auto leading = keyHints({movementHint, open}, {}, leadWidth);
+    if (!places && eject) {
+        leading = keyHints({movementHint, selected ? "↵" : "", ejectHint}, {}, leadWidth);
+        if (leading.find(ejectHint) == std::string::npos) {
+            leading = keyHints({movement ? "F↑X↓" : "", selected ? "↵" : "", ejectHint}, {}, leadWidth);
         }
-        return keys;
+    } else if (!places && usb) {
+        leading = keyHints({movementHint, selected ? "↵" : "", usbHint}, {}, leadWidth);
+        if (leading.find(usbHint) == std::string::npos) {
+            leading = keyHints({movement ? "F↑X↓" : "", usbHint}, {}, leadWidth);
+        }
     }
-    auto keys = keyHints({movement, selected ? open : "", actions, back}, {usbHint});
-    if (keys.find(back) == std::string::npos || (usb && keys.find(usbHint) == std::string::npos)) {
-        keys = keyHints({movement, selected ? "Enter ↵" : "", actions, back}, {usbHint});
+    const auto* placeCommand = !places ? "" : eject ? ejectHint : usbHint;
+    auto trailing = keyHints({tab, places ? "" : back}, {placeCommand}, BrowserKeyHints::trailingWidth);
+    const auto fitsFooter = [&] {
+        return textLength(leading) + textLength(trailing) + (leading.empty() ? 0 : 1) <= 44;
+    };
+    if (!fitsFooter()) {
+        leading = keyHints({movement ? "F↑X↓" : "", usbHint}, {}, leadWidth);
     }
-    return keys;
+    if (places && usb && !eject && trailing.find(usbHint) == std::string::npos) {
+        trailing = keyHints({tab, local("U Drives", "U Disky")}, {}, BrowserKeyHints::trailingWidth);
+    }
+    return {std::move(leading), std::move(trailing)};
 }
 
 }  // namespace files

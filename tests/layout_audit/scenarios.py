@@ -180,7 +180,7 @@ def action(index, from_end=False):
     if not from_end and index < 2:
         menu = capture("wait-action-menu", delay=0, keep=False)
         texts = [obj["text"] for obj in menu["objects"] if not obj["hidden"] and obj["text"]]
-        if (say("Open", "Otevřít") in texts and any(t.startswith(say("E  Eject", "E  Vysunout")) for t in texts)
+        if (say("Open", "Otevřít") in texts and any(t.startswith(say("Eject", "Vysunout")) for t in texts)
                 and any(t == say("Details", "Podrobnosti") for t in texts)):
             index = 1 - index
     for _ in range(index):
@@ -477,7 +477,7 @@ def exercise_usb():
         key("Return")
         capture("drive-folder", expected="/ Příručky")
         key("Tab")
-        assert_selected(capture("drive-menu", expected=say("E  Eject", "E  Vysunout")), say("Open", "Otevřít"))
+        assert_selected(capture("drive-menu", expected=say("Eject", "Vysunout")), say("Open", "Otevřít"))
         key("e")
         capture("eject-confirm", expected=say("Eject drive?", "Vysunout disk?"))
         key("Escape")
@@ -529,7 +529,7 @@ def exercise_usb():
         assert_selected(capture("second-usb-places", expected="UX OTHER"), "UX OTHER")
         key("f")
         key("Tab")
-        assert_selected(capture("places-usb-menu", expected=say("E  Eject", "E  Vysunout")),
+        assert_selected(capture("places-usb-menu", expected=say("Eject", "Vysunout")),
                         say("Open", "Otevřít"))
         key("Escape")
         key("x")
@@ -700,7 +700,7 @@ def exercise_copy():
     try:
         key("x")
         action(2)
-        capture("copy-clipboard", expected=say("In clipboard", "Ve schránce"))
+        capture("copy-clipboard", expected=say("Ready to paste", "Připraveno k vložení"))
         key("f")
         key("Return")
         key("Tab")
@@ -746,7 +746,7 @@ def exercise_copy():
         action(3)
         action(4)
         key("Return", delay=.5)
-        capture("move-already-here", expected=say("The item is already", "Položka už je v této složce"))
+        capture("move-already-here", expected=say("Item is already", "Položka už je v cílové složce"))
     finally:
         stop(app)
         marker.unlink(missing_ok=True)
@@ -833,20 +833,30 @@ def exercise_copy_disconnect(from_usb, move=False):
             # Restart after writing the source so keyboard selection is deterministic.
             stop(app)
             app = launch("copy-disconnect", sample, LD_PRELOAD=str(base/"slow-copy.so"), FILES_COPY_MARKER=str(marker))
-            action(3 if move else 2)
             if move:
-                capture("move-clipboard", expected=say("Tab → Paste and move", "Tab → Vložit přesunem"))
-            attach(copy)
-            time.sleep(.85)
+                attach(copy)
+                time.sleep(5.95)
+                action(3)
+                capture("move-clipboard", expected=(say("Tab → Move here", "Tab → Přesunout sem"),
+                                                    say("U Open drive", "U Otevřít disk")))
+                detach(mount)
+                capture("wait-move-target-detached", expected=say("disconnected", "odpojen"), keep=False)
+                attach(copy)
+                capture("wait-move-target-reconnected", expected=("✓", say("UX COPY connected", "UX COPY připojen")),
+                        keep=False)
+            else:
+                action(2)
+                attach(copy)
+                time.sleep(.85)
             key("u")
             action(0 if move else 1)
         if move:
             capture("move-confirm", expected=say("Move here?", "Přesunout sem?"))
             key("Escape")
-            capture("move-confirm-dismissed", expected=say("Tab → Paste", "Tab → Vložit"))
+            capture("move-confirm-dismissed", expected=say("Tab → Move here", "Tab → Přesunout sem"))
             key("Tab")
-            menu = capture("move-clipboard-paste-menu", expected=say("Paste", "Vložit"))
-            assert_selected(menu, say("Paste", "Vložit"))
+            menu = capture("move-clipboard-paste-menu", expected=say("Move here", "Přesunout sem"))
+            assert_selected(menu, say("Move here", "Přesunout sem"))
             key("Return")
         key("Return")
         wait_for(marker.exists)
@@ -909,7 +919,7 @@ def exercise_retained_copy(long_name=False):
         wait_for(marker.exists)
         detach(mount, lazy=True)
         time.sleep(3.1)
-        capture("copy-target-partial-retained" + suffix, expected=say("A partial copy may remain", "může být neúplná kopie"))
+        capture("copy-target-partial-retained" + suffix, expected=say("check for a partial copy", "Možnou neúplnou kopii"))
         if long_name:
             key("Page_Down")
             capture("copy-target-partial-retained-long-details", expected="v03.bin")
@@ -1006,7 +1016,7 @@ def exercise_additional_storage_states():
         gone.rmdir()
         gone.write_text("A file replaced the folder after the list was read.")
         key("Return")
-        capture("folder-disappeared", expected=say("Item is now a file", "Položka je nyní soubor"))
+        capture("folder-disappeared", expected=say("Folder replaced by a file", "Složku nahradil soubor"))
         key("Return")
         capture("folder-replaced-file-opened", expected="A file replaced the folder")
         key("Escape")
@@ -1338,7 +1348,7 @@ def exercise_previews():
         key("8")
         capture("audio-speed-5", expected="5×")
         key("6")
-        capture("audio-paused", expected=say("Resume", "Pokračovat"))
+        capture("audio-paused", expected=(say("Paused", "Pauza"), say("6 Resume", "6 Hrát")))
         key("6")
         time.sleep(2.0)
         capture("audio-ended", expected="0:08")
@@ -1358,7 +1368,7 @@ def exercise_previews():
         time.sleep(.86)
         capture("video-playing", expected=say("Space Pause", "Mezera Pauza"))
         key("space")
-        capture("video-paused", expected=say("Space Play", "Mezera Pokračovat"))
+        capture("video-paused", expected=say("Space Resume", "Mezera Pokračovat"))
         key("space")
         time.sleep(9)
         capture("video-ended", expected=("05-video", say("Files", "Soubory")))
@@ -1390,7 +1400,7 @@ def exercise_previews():
         pause = say("Ⅱ Paused", "Ⅱ Pauza")
         before = capture("video-paused-long-name", expected=("v03.mp4", pause))
         key("c", delay=1.05)
-        after = capture("video-paused-after-seek", expected=(pause, say("Space Play", "Mezera Pokračovat")))
+        after = capture("video-paused-after-seek", expected=(pause, say("Space Resume", "Mezera Pokračovat")))
 
         def pause_seconds(frame):
             title = next(obj["text"] for obj in frame["objects"]
@@ -1565,8 +1575,12 @@ def exercise_audio_boundaries():
         capture("wait-playing-from-usb", expected=("long.wav", say("Pause", "Pauza")), keep=False)
         detach(mount, lazy=True)
         frame = capture("audio-drive-disconnected", delay=.9, expected=("UX OTHER", say("Preview closed", "Náhled zavřen")))
-        time.sleep(4.5)
-        assert_selected(capture("audio-drive-disconnected-after-notice"), say("Home", "Domů"))
+        after = capture("audio-drive-disconnected-after-notice", delay=5.15)
+        assert_selected(after, say("Home", "Domů"))
+        visible = [obj["text"] for obj in after["objects"] if not obj["hidden"] and obj["text"]]
+        assert not any("UX OTHER" in text or say("E Eject", "E Vysunout") in text for text in visible), visible
+        with Image.open(output / f"audio-drive-disconnected-after-notice-{language}.png") as image:
+            assert image.convert("RGB").crop((4, 108, 316, 150)).getbbox() is None
         assert_selected(frame, say("Home", "Domů"))
     finally:
         stop(app)
@@ -1613,9 +1627,14 @@ def exercise_filesystem_errors():
         capture("permission-denied", expected=say("Permission denied", "Přístup odepřen"))
         key("Escape")
         action(1, from_end=True)
-        key("x")
+        key("x" if language == "cs" else "f")
         key("Return")
-        capture("language-save-failed", expected=say("Could not save language", "Jazyk se nepodařilo uložit"))
+        error = say("Could not save language", "Jazyk se nepodařilo uložit")
+        assert_selected(capture("language-save-failed", expected=error), say("System language", "Systémový jazyk"))
+        key("x" if language == "cs" else "f")
+        key("Return")
+        assert_selected(capture("language-save-failed-other-language", expected=error),
+                        say("Čeština", "English"))
         assert (config/"cardputer-files/language").read_text().strip() == language
         key("Escape")
         action(1, from_end=True)
@@ -1633,7 +1652,7 @@ def exercise_filesystem_errors():
                         FILES_AUDIT_READ_FAULT=str(unreadable_text), FILES_AUDIT_DENY_READ="1")
     try:
         key("Return")
-        capture("text-read-error", expected=say("Permission to read this file was denied", "Chybí oprávnění ke čtení"))
+        capture("text-read-error", expected=say("Read permission denied", "Chybí oprávnění ke čtení"))
     finally:
         stop(permission)
     app = launch("filesystem-errors", source)
@@ -1693,7 +1712,7 @@ def exercise_round5_volume_identity():
         key("x")
         assert_selected(capture("places-duplicate-labels", expected=("UX EJECT #1", "UX EJECT #2")), "UX EJECT #2")
         key("Tab")
-        capture("places-duplicate-menu", expected=("UX EJECT #2", say("E  Eject", "E  Vysunout")))
+        capture("places-duplicate-menu", expected=("UX EJECT #2", say("Eject", "Vysunout")))
         key("e")
         capture("places-duplicate-eject", expected=("UX EJECT #2", say("Eject drive?", "Vysunout disk?")))
         detach(alternate, lazy=True)
@@ -1968,7 +1987,7 @@ def exercise_round6_volume_edges():
         key("x")
         key("Tab")
         key("x")
-        assert_selected(capture("wait-eject-highlight", keep=False), say("E  Eject", "E  Vysunout"))
+        assert_selected(capture("wait-eject-highlight", keep=False), say("Eject", "Vysunout"))
         detach(second, lazy=True)
         assert_selected(capture("eject-menu-target-disconnected", delay=.9, expected="UX OTHER"), "UX EJECT")
         key("Return")

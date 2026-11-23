@@ -212,7 +212,7 @@ public:
         } else {
             _read_failed = true;
             if (error == EACCES || error == EPERM) {
-                _read_reason = local("Permission to read this file was denied.", "Chybí oprávnění ke čtení.");
+                _read_reason = local("Read permission denied.", "Chybí oprávnění ke čtení.");
             } else if (error == EIO) {
                 _read_reason = local("Input/output error.", "Chyba vstupu/výstupu.");
             } else if (error == ENOENT) {

@@ -94,7 +94,8 @@ inline void line(lv_obj_t* label, const std::string& text, int width, const lv_f
     if (fitted != lv_label_get_text(label)) lv_label_set_text(label, fitted.c_str());
 }
 
-inline void keyLegend(lv_obj_t* label, std::string_view keys)
+inline void keyLegend(lv_obj_t* label, std::string_view keys, bool expandGaps = true,
+                      std::string_view groupSpacing = "")
 {
     constexpr std::string_view extraGap = " ";
     size_t groups = 0;
@@ -102,15 +103,17 @@ inline void keyLegend(lv_obj_t* label, std::string_view keys)
         ++groups;
     }
     const auto* font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
-    const bool expand = groups && textLength(keys) + groups <= 44 &&
+    const bool expand = expandGaps && groups && textLength(keys) + groups <= 44 &&
         textWidth(keys, font) + static_cast<int>(groups) * textWidth(extraGap, font) <= lv_obj_get_style_width(label, LV_PART_MAIN);
     std::string formatted;
+    std::string_view previous;
     while (!keys.empty()) {
         const auto end = keys.find(keyGap);
         const auto item = keys.substr(0, end);
         const auto space = item.find(' ');
         if (!formatted.empty()) {
             formatted += keyGap;
+            if (previous != "F↑ X↓") formatted += groupSpacing;
             if (expand) formatted += extraGap;
         }
         if (space == std::string_view::npos || item == "F↑ X↓" || item == "Z← C→") {
@@ -122,6 +125,7 @@ inline void keyLegend(lv_obj_t* label, std::string_view keys)
             formatted += item.substr(keyEnd + 1);
             formatted += '#';
         }
+        previous = item;
         if (end == std::string_view::npos) break;
         keys.remove_prefix(end + keyGap.size());
     }
@@ -139,7 +143,7 @@ inline lv_obj_t* caption(lv_obj_t* parent, int y, const std::string& text, const
     return strip;
 }
 
-inline void toast(lv_obj_t* label, std::string_view text, int y, uint32_t color)
+inline void toast(lv_obj_t* label, std::string_view text, int y, uint32_t color, bool detailHasKey = false)
 {
 #ifdef FILES_LAYOUT_AUDIT
     lv_obj_set_user_data(label, &layout_audit::mono_toast);
@@ -154,7 +158,13 @@ inline void toast(lv_obj_t* label, std::string_view text, int y, uint32_t color)
             detail = ui::label(label, 0, lv_font_get_line_height(uiFont12()), 296, uiFont12());
             lv_obj_set_style_text_align(detail, LV_TEXT_ALIGN_CENTER, 0);
         }
-        line(detail, std::string(text.substr(split + 1)), 296, uiFont12(), 36, true);
+        const auto second = fitText(std::string(text.substr(split + 1)), 296, uiFont12(), 36, true);
+        if (detailHasKey) {
+            keyLegend(detail, second);
+        } else {
+            lv_label_set_recolor(detail, false);
+            lv_label_set_text(detail, second.c_str());
+        }
     }
     if (detail) hidden(detail, !twoLines);
     const int height = twoLines ? 42 : 24;

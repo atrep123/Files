@@ -48,6 +48,10 @@ struct PackageDialog {
     std::optional<double> progress;
     bool cancelling = false;
     std::string metadataStatus;
+    std::string indentedText;
+    std::string afterIndentedText;
+    std::string technicalPath;
+    std::string diagnosticHeading;
 };
 
 struct VolumeNotice {

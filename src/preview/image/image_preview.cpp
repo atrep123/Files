@@ -125,6 +125,8 @@ public:
         }
     }
 
+    bool usesWideFooter() const override { return _preview_loaded && !_fullscreen; }
+
     const std::string& title() const override
     {
         return _title;
@@ -200,12 +202,7 @@ public:
 
         _key_bar = std::make_unique<BottomKeyBar>(_root->raw_ptr());
         if (_preview_loaded) {
-            _key_bar->setItems({
-                {'4', &image_icon_fullscreen},
-                {'5', &image_icon_zoom_out},
-                {'7', &image_icon_zoom_in},
-                {'8', &image_icon_reset},
-            });
+            showWindowedKeys();
         } else {
             _key_bar->setItems({});
         }
@@ -415,15 +412,24 @@ private:
             lv_obj_set_style_clip_corner(_viewport->raw_ptr(), false, LV_PART_MAIN);
             ui::hidden(_title_bar, false);
             if (_key_bar && _preview_loaded) {
-                _key_bar->setItems({
-                    {'4', &image_icon_fullscreen},
-                    {'5', &image_icon_zoom_out},
-                    {'7', &image_icon_zoom_in},
-                    {'8', &image_icon_reset},
-                });
+                showWindowedKeys();
             }
         }
         applyImageTransform();
+    }
+
+    void showWindowedKeys()
+    {
+        const auto* fullscreen = local("4 Full screen", "4 Celá obrazovka");
+        const int zoomOut = 8 + textWidth(fullscreen, uiFont12()) + 10;
+        const int zoomIn = zoomOut + textWidth("5 −", uiFont12()) + 10;
+        const int rotate = zoomIn + textWidth("7 +", uiFont12()) + 10;
+        const auto* rotation = local("8 Rotate", "8 Otočit");
+        const int back = rotate + textWidth(rotation, uiFont12()) + 10;
+        const auto* backAction = local("Esc Back", "Esc Zpět");
+        _key_bar->setSlots({{8, zoomOut - 8, fullscreen}, {zoomOut, zoomIn - zoomOut, "5 −"},
+                            {zoomIn, rotate - zoomIn, "7 +"}, {rotate, back - rotate, rotation},
+                            {back, textWidth(backAction, uiFont12()) + 1, backAction}});
     }
 
     void applyImageTransform()
